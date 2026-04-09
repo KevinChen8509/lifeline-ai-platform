@@ -25,6 +25,7 @@ import { AiAnalysisModule } from './modules/ai-analysis/ai-analysis.module';
 import { MonitoringModule } from './modules/monitoring/monitoring.module';
 import { AlertModule } from './modules/alert/alert.module';
 import { TelemetryModule } from './modules/telemetry/telemetry.module';
+import { OpenApiModule } from './modules/open-api/open-api.module';
 
 // 通用
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -96,6 +97,7 @@ import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
     MonitoringModule,
     AlertModule,
     TelemetryModule,
+    OpenApiModule,
   ],
   providers: [
     // 全局异常过滤器
