@@ -1,0 +1,198 @@
+# generated: 2026-03-26
+# last_updated: 2026-04-09
+# project: 生命线AI感知云平台
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created in stories folder
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically creates next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-03-26
+last_updated: 2026-04-09
+project: 生命线AI感知云平台
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # ===========================================
+  # Epic 1: 用户认证与权限管理 (12 Stories)
+  # FRs: FR46-FR51
+  # ===========================================
+  epic-1: done
+  1-1-project-init-and-framework-setup: done
+  1-2-user-registration-and-account-creation: done
+  1-3-user-login-authentication: done
+  1-4-token-refresh-and-logout: done
+  1-5-role-definition-and-permission-rules: done
+  1-6-user-role-assignment: done
+  1-7-user-status-management-and-account-disable: done
+  1-8-user-list-and-query: done
+  1-9-operation-audit-log-recording: done
+  1-10-audit-log-query: done
+  1-11-frontend-route-permission-control: done
+  1-12-api-permission-guard: done
+  epic-1-retrospective: optional
+
+  # ===========================================
+  # Epic 2: 项目与设备组织管理 (9 Stories)
+  # FRs: FR1-FR5
+  # ===========================================
+  epic-2: done
+  2-1-project-entity-and-table-creation: done
+  2-2-project-creation: done
+  2-3-project-list-and-query: done
+  2-4-project-details-and-device-overview: done
+  2-5-project-configuration-editing: done
+  2-6-project-member-management: done
+  2-7-device-project-organization-and-assignment: done
+  2-8-project-level-data-isolation-middleware: done
+  2-9-project-archive-and-restore: done
+  epic-2-retrospective: optional
+
+  # ===========================================
+  # Epic 3: 设备快速上线（核心差异化）(11 Stories)
+  # FRs: FR6-FR15
+  # ===========================================
+  epic-3: done
+  3-1-device-qr-code-scan-registration: done
+  3-2-third-party-device-manual-entry: done
+  3-3-device-activation-and-online-confirmation: done
+  3-4-device-realtime-status-view: done
+  3-5-device-details-and-config-view: done
+  3-6-device-collection-and-upload-config: done
+  3-7-device-alert-threshold-config: done
+  3-8-device-batch-config-operation: done
+  3-9-device-status-history-record: done
+  3-10-device-firmware-ota-upgrade: done
+  3-11-device-firmware-version-view: done
+  epic-3-retrospective: optional
+
+  # ===========================================
+  # Epic 4: AI模型管理与边缘推理 (15 Stories)
+  # FRs: FR16-FR23
+  # ===========================================
+  epic-4: done
+  4-1-ai-model-entity-and-table-creation: done
+  4-2-ai-model-list-view: done
+  4-3-ai-model-details-view: done
+  4-4-device-model-binding-operation: done
+  4-5-device-model-binding-removal: done
+  4-6-model-binding-status-view: done
+  4-7-ai-analysis-result-realtime-view: done
+  4-8-ai-analysis-confidence-display: done
+  4-9-ai-analysis-history-query: done
+  4-10-model-version-management: done
+  4-11-edge-model-deployment-and-update: done
+  4-12-model-deployment-progress-monitoring: done
+  4-13-model-runtime-status-dashboard: done
+  4-14-batch-model-binding: done
+  4-15-ai-analysis-result-aggregation-stats: done
+  epic-4-retrospective: optional
+
+  # ===========================================
+  # Epic 5: 实时预警与处置闭环 (15 Stories)
+  # FRs: FR24-FR31
+  # ===========================================
+  epic-5: backlog
+  5-1-alert-entity-and-table-creation: backlog
+  5-2-alert-dashboard-list-display: backlog
+  5-3-alert-details-view: backlog
+  5-4-alert-associated-history-data-chart: backlog
+  5-5-alert-acknowledge-operation: backlog
+  5-6-alert-process-operation: backlog
+  5-7-alert-close-operation: backlog
+  5-8-work-order-generation: backlog
+  5-9-alert-push-notification-config: backlog
+  5-10-alert-realtime-push: backlog
+  5-11-alert-filter-query: backlog
+  5-12-alert-handling-closed-loop-status: backlog
+  5-13-alert-level-auto-classification: backlog
+  5-14-alert-stats-card-display: backlog
+  5-15-alert-escalation-mechanism: backlog
+  epic-5-retrospective: optional
+
+  # ===========================================
+  # Epic 6: 数据存储与历史查询 (10 Stories)
+  # FRs: FR41-FR45
+  # ===========================================
+  epic-6: backlog
+  6-1-clickhouse-timeseries-table-creation: backlog
+  6-2-device-telemetry-write-service: backlog
+  6-3-history-telemetry-query-api: backlog
+  6-4-time-range-filter: backlog
+  6-5-multi-metric-chart-display: backlog
+  6-6-auto-backup-task-config: backlog
+  6-7-auto-backup-execution-and-monitoring: backlog
+  6-8-backup-restore-function: backlog
+  6-9-history-data-archive: backlog
+  6-10-archived-data-query: backlog
+  epic-6-retrospective: optional
+
+  # ===========================================
+  # Epic 7: 开放API与系统集成 (15 Stories)
+  # FRs: FR32-FR40
+  # ===========================================
+  epic-7: backlog
+  7-1-api-key-entity-and-table-creation: backlog
+  7-2-swagger-openapi-doc-config: backlog
+  7-3-api-doc-online-view: backlog
+  7-4-api-key-self-service-application: backlog
+  7-5-api-key-permission-scope-config: backlog
+  7-6-api-key-validity-management: backlog
+  7-7-api-authentication-middleware: backlog
+  7-8-open-api-device-status-query: backlog
+  7-9-open-api-ai-result-query: backlog
+  7-10-open-api-history-data-query: backlog
+  7-11-webhook-config-management: backlog
+  7-12-webhook-connectivity-test: backlog
+  7-13-webhook-event-push-service: backlog
+  7-14-api-call-log-recording: backlog
+  7-15-api-call-stats-and-monitoring: backlog
+  epic-7-retrospective: optional
+
+  # ===========================================
+  # Epic 8: 监控看板与运营报告 (12 Stories)
+  # FRs: FR52-FR57
+  # ===========================================
+  epic-8: backlog
+  8-1-project-dashboard-device-online-rate: backlog
+  8-2-project-dashboard-alert-stats: backlog
+  8-3-project-dashboard-key-metrics: backlog
+  8-4-alert-type-distribution-stats: backlog
+  8-5-alert-handling-efficiency-stats: backlog
+  8-6-operation-report-template-definition: backlog
+  8-7-operation-report-one-click-generation: backlog
+  8-8-report-pdf-export: backlog
+  8-9-scheduled-report-auto-generation: backlog
+  8-10-scheduled-report-email-sending: backlog
+  8-11-system-runtime-status-monitoring: backlog
+  8-12-system-resource-usage-monitoring: backlog
+  epic-8-retrospective: optional
