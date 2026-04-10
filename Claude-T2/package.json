@@ -1,0 +1,29 @@
+{
+  "name": "@lifeline-ai/platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "生命线AI感知云平台 - Cloud-Edge-Device IoT Platform",
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter @lifeline-ai/api dev\" \"pnpm --filter @lifeline-ai/web dev\"",
+    "dev:api": "pnpm --filter @lifeline-ai/api dev",
+    "dev:web": "pnpm --filter @lifeline-ai/web dev",
+    "build": "pnpm -r build",
+    "build:api": "pnpm --filter @lifeline-ai/api build",
+    "build:web": "pnpm --filter @lifeline-ai/web build",
+    "test": "pnpm -r test",
+    "test:api": "pnpm --filter @lifeline-ai/api test",
+    "lint": "pnpm -r lint",
+    "clean": "pnpm -r clean"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "jsdom": "^29.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "dependencies": {
+    "@casl/ability": "^6.8.0"
+  }
+}
