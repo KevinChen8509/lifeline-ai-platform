@@ -28,3 +28,6 @@ coverage/
 
 # Temp files
 *.tmp
+
+# Lock files (project uses pnpm)
+package-lock.json
