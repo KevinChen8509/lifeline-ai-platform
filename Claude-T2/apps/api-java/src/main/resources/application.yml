@@ -1,0 +1,53 @@
+server:
+  port: 3000
+  servlet:
+    context-path: /api
+
+spring:
+  application:
+    name: lifeline-api
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/lifeline
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        physical_naming_strategy: org.hibernate.boot.model.naming.CamelCaseToUnderscoresNamingStrategy
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 5000
+
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    property-naming-strategy: SNAKE_CASE
+
+# JWT
+jwt:
+  secret: your-super-secret-key-at-least-32-characters
+  access-expiration: 3600000    # 1 hour
+  refresh-expiration: 604800000  # 7 days
+
+# Logging
+logging:
+  level:
+    com.lifeline: DEBUG
+    org.hibernate.SQL: DEBUG
+
+# Management
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
