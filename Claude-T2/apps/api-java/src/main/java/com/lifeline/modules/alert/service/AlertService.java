@@ -4,7 +4,6 @@ import com.lifeline.common.exception.BusinessException;
 import com.lifeline.common.response.PageResponse;
 import com.lifeline.modules.alert.entity.Alert;
 import com.lifeline.modules.alert.entity.AlertLevel;
-import com.lifeline.modules.alert.entity.AlertLevel;
 import com.lifeline.modules.alert.entity.AlertStatus;
 import com.lifeline.modules.alert.entity.AlertType;
 import com.lifeline.modules.alert.repository.AlertRepository;
