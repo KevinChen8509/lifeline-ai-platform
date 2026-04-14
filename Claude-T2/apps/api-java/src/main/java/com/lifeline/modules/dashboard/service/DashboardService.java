@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
+import java.lang.management.OperatingSystemMXBean;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -54,5 +55,44 @@ public class DashboardService {
         status.put("timestamp", java.time.LocalDateTime.now().toString());
 
         return status;
+    }
+
+    // === Per-Project Dashboard ===
+
+    public Map<String, Object> getProjectDeviceStats(String projectId) {
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("total", 0);
+        stats.put("online", 0);
+        stats.put("offline", 0);
+        stats.put("alert", 0);
+        stats.put("onlineRate", 0.0);
+        stats.put("trend", java.util.Collections.emptyList());
+        return stats;
+    }
+
+    public Map<String, Object> getProjectAlertStats(String projectId) {
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("todayTotal", 0);
+        stats.put("pending", 0);
+        stats.put("closed", 0);
+        stats.put("byLevel", Map.of("critical", 0, "high", 0, "medium", 0, "low", 0));
+        stats.put("trend", java.util.Collections.emptyList());
+        stats.put("recent", java.util.Collections.emptyList());
+        return stats;
+    }
+
+    public Map<String, Object> getProjectKpi(String projectId) {
+        Map<String, Object> kpi = new LinkedHashMap<>();
+        kpi.put("avgHandleTime", 0);
+        kpi.put("handleRate", 0);
+        kpi.put("aiAnalysisCount", 0);
+        kpi.put("telemetryCount", 0);
+        kpi.put("trends", Map.of(
+                "handleRate", java.util.Collections.emptyList(),
+                "avgHandleTime", java.util.Collections.emptyList(),
+                "aiAnalysisCount", java.util.Collections.emptyList(),
+                "telemetryCount", java.util.Collections.emptyList()
+        ));
+        return kpi;
     }
 }

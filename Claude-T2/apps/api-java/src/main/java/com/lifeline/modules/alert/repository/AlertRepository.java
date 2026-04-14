@@ -34,4 +34,8 @@ public interface AlertRepository extends JpaRepository<Alert, String> {
     List<Map<String, Object>> countByLevel();
 
     long countByStatus(AlertStatus status);
+
+    List<Alert> findByStatusNot(AlertStatus status);
+
+    List<Alert> findByProjectIdAndStatusNot(String projectId, AlertStatus status);
 }

@@ -80,3 +80,48 @@ export function processAlert(id: string, description: string): Promise<Alert> {
 export function closeAlert(id: string, resolution: string, rootCause?: string): Promise<Alert> {
   return request.post(`/alerts/${id}/close`, { resolution, rootCause });
 }
+
+export interface TimelineResponse {
+  nodes: AlertStatusHistoryItem[];
+  progress: number;
+  isOverdue: boolean;
+  workOrders: WorkOrder[];
+}
+
+export interface AlertStatusHistoryItem {
+  id: string;
+  alertId: string;
+  oldStatus: string | null;
+  newStatus: string;
+  operatorId: string | null;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface WorkOrder {
+  id: string;
+  workOrderNo: string;
+  alertId: string;
+  title: string;
+  description: string | null;
+  assigneeId: string | null;
+  status: string;
+  priority: string;
+  dueDate: string | null;
+  completedAt: string | null;
+  createdAt: string;
+}
+
+export function getAlertTimeline(id: string): Promise<TimelineResponse> {
+  return request.get(`/alerts/${id}/timeline`);
+}
+
+export function createWorkOrder(alertId: string, data: {
+  title: string;
+  description?: string;
+  assigneeId?: string;
+  priority?: string;
+  dueDate?: string;
+}): Promise<WorkOrder> {
+  return request.post(`/alerts/${alertId}/work-order`, data);
+}

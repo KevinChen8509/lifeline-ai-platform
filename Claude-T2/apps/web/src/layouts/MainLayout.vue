@@ -72,6 +72,8 @@ import {
   SettingOutlined,
   AppstoreOutlined,
   MenuOutlined,
+  BarChartOutlined,
+  DesktopOutlined,
 } from '@ant-design/icons-vue';
 
 const router = useRouter();
@@ -95,6 +97,8 @@ const iconMap: Record<string, any> = {
   SettingOutlined,
   AppstoreOutlined,
   MenuOutlined,
+  BarChartOutlined,
+  DesktopOutlined,
 };
 
 function getIconComponent(iconName?: string) {

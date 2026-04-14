@@ -7,6 +7,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
+import java.util.List;
+
 public interface TelemetryRepository extends JpaRepository<DeviceTelemetry, String> {
 
     @Query("SELECT t FROM DeviceTelemetry t WHERE " +
@@ -17,4 +20,7 @@ public interface TelemetryRepository extends JpaRepository<DeviceTelemetry, Stri
                                              @Param("startTime") String startTime,
                                              @Param("endTime") String endTime,
                                              Pageable pageable);
+
+    List<DeviceTelemetry> findByDeviceIdAndTimestampBetweenOrderByTimestampAsc(
+            String deviceId, LocalDateTime start, LocalDateTime end);
 }

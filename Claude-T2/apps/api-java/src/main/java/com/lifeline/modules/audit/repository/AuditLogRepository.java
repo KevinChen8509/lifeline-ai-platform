@@ -17,4 +17,14 @@ public interface AuditLogRepository extends JpaRepository<AuditLog, String> {
                                       @Param("targetType") String targetType,
                                       @Param("operatorId") String operatorId,
                                       Pageable pageable);
+
+    @Query("SELECT a FROM AuditLog a WHERE " +
+           "(:action IS NULL OR a.action = :action) " +
+           "AND (:targetType IS NULL OR a.targetType = :targetType) " +
+           "AND (:operatorId IS NULL OR a.operatorId = :operatorId) " +
+           "ORDER BY a.createdAt DESC")
+    java.util.List<AuditLog> findTop10000WithFilters(@Param("action") String action,
+                                                       @Param("targetType") String targetType,
+                                                       @Param("operatorId") String operatorId,
+                                                       org.springframework.data.domain.Pageable pageable);
 }

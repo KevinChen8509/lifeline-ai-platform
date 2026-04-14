@@ -1,33 +1,50 @@
 import { request } from './request';
 
 export interface DashboardStats {
+  totalProjects: number;
   totalDevices: number;
-  onlineDevices: number;
-  offlineDevices: number;
-  alertDevices: number;
-  todayAlerts: number;
-  onlineRate: number;
+  totalUsers: number;
+  pendingAlerts: number;
 }
 
 export interface AlertDistribution {
-  stats: Record<string, number>;
+  [key: string]: number;
 }
 
-export interface SystemStatus {
-  cpu: number;
-  memory: number;
-  uptime: number;
-  version: string;
+export function getDashboardStats(): Promise<DashboardStats> {
+  return request.get('/dashboard/stats');
 }
 
-export function getDashboardStats(projectId?: string): Promise<DashboardStats> {
-  return request.get('/dashboard/stats', { params: { projectId } });
+export function getAlertDistribution(): Promise<AlertDistribution> {
+  return request.get('/dashboard/alert-distribution');
 }
 
-export function getAlertDistribution(projectId?: string): Promise<AlertDistribution> {
-  return request.get('/dashboard/alert-distribution', { params: { projectId } });
+export function getSystemStatus(): Promise<any> {
+  return request.get('/dashboard/system-status');
 }
 
-export function getSystemStatus(): Promise<SystemStatus> {
-  return request.get('/system/status');
+export function getProjectDeviceStats(projectId: string): Promise<any> {
+  return request.get(`/dashboard/projects/${projectId}/device-stats`);
+}
+
+export function getProjectAlertStats(projectId: string): Promise<any> {
+  return request.get(`/dashboard/projects/${projectId}/alert-stats`);
+}
+
+export function getProjectKpi(projectId: string): Promise<any> {
+  return request.get(`/dashboard/projects/${projectId}/kpi`);
+}
+
+// Statistics
+export function getAlertTypeDistribution(params?: { projectId?: string; startDate?: string; endDate?: string }): Promise<any> {
+  return request.get('/statistics/alert-type-distribution', { params });
+}
+
+export function getAlertHandlingEfficiency(params?: { projectId?: string; startDate?: string; endDate?: string }): Promise<any> {
+  return request.get('/statistics/alert-handling-efficiency', { params });
+}
+
+// System
+export function getSystemResources(): Promise<any> {
+  return request.get('/system/resources');
 }
