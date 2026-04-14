@@ -26,6 +26,7 @@ export interface FindAuditLogsOptions {
   action?: string;
   targetType?: string;
   targetId?: string;
+  
   operatorId?: string;
   startDate?: Date;
   endDate?: Date;
