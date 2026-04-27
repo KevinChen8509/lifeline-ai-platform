@@ -44,24 +44,24 @@
 
       <!-- Step 2: 规则配置 -->
       <div v-show="step === 1">
-        <RuleConflictWarning :conflicts="ruleForm.conflictMessages" />
-        <div v-for="(rule, idx) in ruleForm.rules" :key="idx" class="rule-item">
+        <RuleConflictWarning :conflicts="conflictMessages" />
+        <div v-for="(rule, idx) in rules" :key="idx" class="rule-item">
           <el-card shadow="never">
             <div class="rule-header">
               <span>规则 #{{ idx + 1 }}</span>
-              <el-button v-if="ruleForm.rules.length > 1" link type="danger" @click="ruleForm.removeRule(idx)">删除</el-button>
+              <el-button v-if="rules.length > 1" link type="danger" @click="removeRule(idx)">删除</el-button>
             </div>
             <el-form label-width="100px">
               <el-form-item label="规则类型">
                 <el-select v-model="rule.ruleType" style="width:200px">
-                  <el-option v-for="t in ruleForm.ruleTypes" :key="t.value" :label="t.label" :value="t.value" />
+                  <el-option v-for="t in ruleTypes" :key="t.value" :label="t.label" :value="t.value" />
                 </el-select>
               </el-form-item>
               <el-form-item label="条件">
                 <div class="condition-row">
                   <el-input v-model="rule.condition.field" placeholder="字段" style="width:120px" />
                   <el-select v-model="rule.condition.operator" style="width:100px">
-                    <el-option v-for="op in ruleForm.operators" :key="op.value" :label="op.label" :value="op.value" />
+                    <el-option v-for="op in operators" :key="op.value" :label="op.label" :value="op.value" />
                   </el-select>
                   <el-input-number v-model="rule.condition.value" placeholder="阈值" />
                 </div>
@@ -82,7 +82,7 @@
             </el-form>
           </el-card>
         </div>
-        <el-button type="primary" plain @click="ruleForm.addRule()" class="add-rule-btn">+ 添加规则</el-button>
+        <el-button type="primary" plain @click="addRule()" class="add-rule-btn">+ 添加规则</el-button>
       </div>
 
       <!-- Step 3: 确认 -->
@@ -93,7 +93,7 @@
           <el-descriptions-item label="类型">{{ ['设备级', '设备类型级', '分组级'][basicForm.subscriptionType] }}</el-descriptions-item>
           <el-descriptions-item label="目标 ID">{{ basicForm.targetId }}</el-descriptions-item>
           <el-descriptions-item label="数据点">{{ basicForm.dataPointIds?.join(', ') || '全部' }}</el-descriptions-item>
-          <el-descriptions-item label="规则数量">{{ ruleForm.rules.length }}</el-descriptions-item>
+          <el-descriptions-item label="规则数量">{{ rules.length }}</el-descriptions-item>
         </el-descriptions>
       </div>
     </div>
@@ -124,7 +124,7 @@ const router = useRouter()
 const route = useRoute()
 const endpointStore = useEndpointStore()
 const subStore = useSubscriptionStore()
-const ruleForm = useRuleForm()
+const { rules, operators, ruleTypes, hasConflict, conflictMessages, addRule, removeRule, resetRules, isValid } = useRuleForm()
 
 const step = ref(0)
 const submitting = ref(false)
@@ -175,7 +175,7 @@ async function submit() {
       subscriptionType: basicForm.value.subscriptionType,
       targetId: basicForm.value.targetId!,
       dataPointIds: basicForm.value.dataPointIds.length > 0 ? basicForm.value.dataPointIds : undefined,
-      rules: ruleForm.rules.map(r => ({
+      rules: rules.map(r => ({
         ruleType: ruleTypeToNumber(r.ruleType),
         conditionJson: JSON.stringify({ field: r.condition.field, operator: r.condition.operator, value: r.condition.value }),
         cooldownSeconds: r.cooldownSeconds,

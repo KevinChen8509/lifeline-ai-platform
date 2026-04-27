@@ -7,6 +7,9 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
 
+// Mock API (dev only — intercepts all requests, no backend needed)
+import './mocks/handlers'
+
 const app = createApp(App)
 const pinia = createPinia()
 
