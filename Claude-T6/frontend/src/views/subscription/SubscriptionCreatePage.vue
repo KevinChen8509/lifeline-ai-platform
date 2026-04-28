@@ -124,13 +124,13 @@ const router = useRouter()
 const route = useRoute()
 const endpointStore = useEndpointStore()
 const subStore = useSubscriptionStore()
-const { rules, operators, ruleTypes, hasConflict, conflictMessages, addRule, removeRule, resetRules, isValid } = useRuleForm()
+const { rules, operators, ruleTypes, addRule, removeRule, resetRules } = useRuleForm()
 
 const step = ref(0)
 const submitting = ref(false)
 const isEdit = computed(() => !!route.query.edit)
 const dataPoints = ref<DeviceDataPoint[]>([])
-
+const conflictMessages = ref<string[]>([])
 const basicFormRef = ref<FormInstance>()
 const basicForm = ref({
   name: '',
@@ -161,6 +161,23 @@ async function nextStep() {
         const res = await deviceService.getDataPoints(basicForm.value.targetId)
         dataPoints.value = res.data || []
       } catch { /* 设备类型级/分组级可能无法加载数据点 */ }
+    }
+    // 检查规则冲突（仅设备级订阅）
+    if (basicForm.value.subscriptionType === 0 && basicForm.value.targetId) {
+      try {
+        const conflicts = await subStore.checkConflicts(
+          basicForm.value.targetId,
+          basicForm.value.dataPointIds.length > 0 ? basicForm.value.dataPointIds : undefined,
+          route.query.edit ? Number(route.query.edit) : undefined
+        )
+        conflictMessages.value = conflicts.length > 0
+          ? conflicts.map((c: any) => `规则 ID ${c.id}: ${c.conditionJson} 可能与已有订阅重叠`)
+          : []
+      } catch {
+        conflictMessages.value = []
+      }
+    } else {
+      conflictMessages.value = []
     }
   }
   step.value++

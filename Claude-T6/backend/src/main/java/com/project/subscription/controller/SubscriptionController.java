@@ -1,5 +1,6 @@
 package com.project.subscription.controller;
 
+import com.project.subscription.config.SecurityUtils;
 import com.project.subscription.model.dto.ApiResponse;
 import com.project.subscription.model.dto.PageResponse;
 import com.project.subscription.model.dto.RuleDto;
@@ -20,20 +21,17 @@ public class SubscriptionController {
 
     private final SubscriptionService subscriptionService;
 
-    private Long tenantId = 1L;
-    private Long userId = 1L;
-
     @GetMapping
     public ApiResponse<PageResponse<WebhookSubscription>> list(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        Page<WebhookSubscription> result = subscriptionService.list(tenantId, userId, page, size);
+        Page<WebhookSubscription> result = subscriptionService.list(SecurityUtils.getTenantId(), SecurityUtils.getUserId(), page, size);
         return ApiResponse.ok(PageResponse.from(result));
     }
 
     @PostMapping
     public ApiResponse<SubscriptionDto.Response> create(@Valid @RequestBody SubscriptionDto.CreateRequest req) {
-        return ApiResponse.ok(subscriptionService.create(tenantId, userId, req));
+        return ApiResponse.ok(subscriptionService.create(SecurityUtils.getTenantId(), SecurityUtils.getUserId(), req));
     }
 
     @GetMapping("/{id}")

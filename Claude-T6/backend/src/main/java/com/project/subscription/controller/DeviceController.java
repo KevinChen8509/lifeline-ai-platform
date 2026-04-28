@@ -1,5 +1,6 @@
 package com.project.subscription.controller;
 
+import com.project.subscription.config.SecurityUtils;
 import com.project.subscription.model.dto.ApiResponse;
 import com.project.subscription.model.dto.PageResponse;
 import com.project.subscription.model.entity.Device;
@@ -19,20 +20,18 @@ public class DeviceController {
 
     private final DeviceService deviceService;
 
-    private Long tenantId = 1L;
-
     @GetMapping("/devices")
     public ApiResponse<PageResponse<Device>> listDevices(
             @RequestParam(required = false) Long productId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        Page<Device> result = deviceService.listDevices(tenantId, productId, page, size);
+        Page<Device> result = deviceService.listDevices(SecurityUtils.getTenantId(), productId, page, size);
         return ApiResponse.ok(PageResponse.from(result));
     }
 
     @GetMapping("/devices/{id}")
     public ApiResponse<Device> getDevice(@PathVariable Long id) {
-        return ApiResponse.ok(deviceService.getDevice(id, tenantId));
+        return ApiResponse.ok(deviceService.getDevice(id, SecurityUtils.getTenantId()));
     }
 
     @GetMapping("/devices/{id}/datapoints")
@@ -42,6 +41,6 @@ public class DeviceController {
 
     @GetMapping("/device-groups/tree")
     public ApiResponse<List<Map<String, Object>>> getGroupTree() {
-        return ApiResponse.ok(deviceService.getGroupTree(tenantId));
+        return ApiResponse.ok(deviceService.getGroupTree(SecurityUtils.getTenantId()));
     }
 }

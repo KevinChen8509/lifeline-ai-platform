@@ -1,8 +1,15 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { isAuthenticated } from '@/services/http'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    {
+      path: '/login',
+      name: 'Login',
+      component: () => import('@/views/auth/LoginPage.vue'),
+      meta: { title: '登录', public: true },
+    },
     {
       path: '/',
       component: () => import('@/layouts/AppLayout.vue'),
@@ -51,6 +58,10 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   document.title = `${to.meta.title || 'IoT'} - 数据订阅平台`
+
+  if (!to.meta.public && !isAuthenticated()) {
+    return { name: 'Login' }
+  }
 })
 
 export default router

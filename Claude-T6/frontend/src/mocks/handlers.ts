@@ -103,6 +103,10 @@ const mockAdapter = {
   },
 
   post(url: string, data?: any): any {
+    if (url === '/auth/token') {
+      // Mock JWT: just return a fake token
+      return mockOk({ token: 'mock_jwt_' + Date.now(), userId: data?.userId || 1, tenantId: data?.tenantId || 1 })
+    }
     if (url === '/webhook-endpoints') {
       const secret = 'whsec_' + Math.random().toString(36).substring(2, 18)
       return mockOk({ endpointId: ++nextId, secret })
@@ -152,9 +156,7 @@ function mockPage(items: any[], page: number, size: number) {
 }
 
 // Install mock interceptor on the axios instance
-const originalRequest = http.request.bind(http)
-
-http.interceptors.request.clear()
+// Keep existing request interceptor (JWT token injection) from http.ts
 http.interceptors.response.clear()
 
 http.interceptors.request.use((config: any) => {

@@ -1,5 +1,6 @@
 package com.project.subscription.controller;
 
+import com.project.subscription.config.SecurityUtils;
 import com.project.subscription.model.dto.ApiResponse;
 import com.project.subscription.model.dto.EndpointDto;
 import com.project.subscription.service.WebhookEndpointService;
@@ -16,39 +17,35 @@ public class WebhookEndpointController {
 
     private final WebhookEndpointService endpointService;
 
-    // TODO: 从认证上下文获取，暂用请求头模拟
-    private Long tenantId = 1L;
-    private Long userId = 1L;
-
     @PostMapping
     public ApiResponse<EndpointDto.SecretResponse> create(@Valid @RequestBody EndpointDto.CreateRequest req) {
-        return ApiResponse.ok(endpointService.create(tenantId, userId, req));
+        return ApiResponse.ok(endpointService.create(SecurityUtils.getTenantId(), SecurityUtils.getUserId(), req));
     }
 
     @GetMapping
     public ApiResponse<List<EndpointDto.Response>> list() {
-        return ApiResponse.ok(endpointService.listByUser(tenantId, userId));
+        return ApiResponse.ok(endpointService.listByUser(SecurityUtils.getTenantId(), SecurityUtils.getUserId()));
     }
 
     @GetMapping("/{id}")
     public ApiResponse<EndpointDto.Response> getDetail(@PathVariable Long id) {
-        return ApiResponse.ok(endpointService.getById(id, tenantId));
+        return ApiResponse.ok(endpointService.getById(id, SecurityUtils.getTenantId()));
     }
 
     @PutMapping("/{id}")
     public ApiResponse<EndpointDto.Response> update(@PathVariable Long id,
                                                      @RequestBody EndpointDto.UpdateRequest req) {
-        return ApiResponse.ok(endpointService.update(id, tenantId, req));
+        return ApiResponse.ok(endpointService.update(id, SecurityUtils.getTenantId(), req));
     }
 
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
-        endpointService.delete(id, tenantId);
+        endpointService.delete(id, SecurityUtils.getTenantId());
         return ApiResponse.ok();
     }
 
     @GetMapping("/quota")
     public ApiResponse<EndpointDto.QuotaInfo> getQuota() {
-        return ApiResponse.ok(endpointService.getQuota(tenantId, userId));
+        return ApiResponse.ok(endpointService.getQuota(SecurityUtils.getTenantId(), SecurityUtils.getUserId()));
     }
 }
