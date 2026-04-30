@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>推送可靠性监控面板</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.7.0/dist/index.css">
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--success:#22c55e;--warn:#f59e0b;--danger:#ef4444;--info:#06b6d4;--purple:#a855f7}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.top-bar{background:var(--card);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:16px}
+.top-bar h1{font-size:18px;font-weight:600}
+.top-bar .meta{font-size:12px;color:var(--muted)}
+.main{display:flex;height:calc(100vh - 53px)}
+.sidebar{width:180px;background:var(--card);border-right:1px solid var(--border);padding:8px 0;flex-shrink:0}
+.sidebar .nav-item{padding:10px 16px;cursor:pointer;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px;transition:.2s}
+.sidebar .nav-item:hover{background:rgba(59,130,246,.1);color:var(--text)}
+.sidebar .nav-item.active{color:var(--accent);background:rgba(59,130,246,.12);border-right:3px solid var(--accent)}
+.content{flex:1;padding:20px;overflow-y:auto}
+.stats-row{display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.stat-card{flex:1;min-width:100px;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;position:relative;overflow:hidden}
+.stat-card .label{font-size:11px;color:var(--muted);margin-bottom:4px}
+.stat-card .value{font-size:24px;font-weight:700}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+.card h3{font-size:14px;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.tag-SUCCESS{background:rgba(34,197,94,.15);color:var(--success)}
+.tag-PENDING{background:rgba(59,130,246,.15);color:var(--accent)}
+.tag-IN_MEMORY_RETRY{background:rgba(245,158,11,.15);color:var(--warn)}
+.tag-RETRY_SCHEDULED{background:rgba(245,158,11,.2);color:var(--warn)}
+.tag-FAILED{background:rgba(239,68,68,.15);color:var(--danger)}
+.tag-CIRCUIT_OPEN{background:rgba(168,85,247,.15);color:var(--purple)}
+.tag-DEAD_LETTER{background:rgba(239,68,68,.25);color:#ff6b6b}
+.tag-ALERT{background:rgba(239,68,68,.15);color:var(--danger)}
+.tag-REALTIME_DATA{background:rgba(34,197,94,.15);color:var(--success)}
+.tag-CLOSED{background:rgba(34,197,94,.15);color:var(--success)}
+.tag-OPEN{background:rgba(239,68,68,.15);color:var(--danger)}
+.tag-HALF_OPEN{background:rgba(245,158,11,.15);color:var(--warn)}
+.task-row{padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:.15s}
+.task-row:hover{border-color:var(--accent);background:rgba(59,130,246,.05)}
+.task-row.selected{border-color:var(--accent);background:rgba(59,130,246,.1)}
+.task-list{max-height:calc(100vh - 340px);overflow-y:auto}
+.json-viewer{background:#0c1222;border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'Cascadia Code',Consolas,monospace;font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:400px;overflow-y:auto;line-height:1.6}
+.json-viewer .key{color:#7dd3fc}.json-viewer .str{color:#86efac}.json-viewer .num{color:#fbbf24}.json-viewer .bool{color:#c084fc}
+.cb-card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;display:flex;align-items:center;gap:12px}
+.cb-dot{width:12px;height:12px;border-radius:50%}
+.cb-dot.CLOSED{background:var(--success);box-shadow:0 0 6px rgba(34,197,94,.5)}
+.cb-dot.OPEN{background:var(--danger);box-shadow:0 0 6px rgba(239,68,68,.5);animation:blink 1s infinite}
+.cb-dot.HALF_OPEN{background:var(--warn);box-shadow:0 0 6px rgba(245,158,11,.5)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.el-input__inner,.el-textarea__inner,.el-select__wrapper{background:#0f172a!important;color:var(--text)!important;border-color:var(--border)!important}
+.el-form-item__label{color:var(--muted)!important}
+.el-table{--el-table-bg-color:var(--card);--el-table-tr-bg-color:var(--card);--el-table-header-bg-color:#162032;--el-table-row-hover-bg-color:#1a2744;--el-table-border-color:var(--border);--el-table-text-color:var(--text);--el-table-header-text-color:var(--muted)}
+.bar-chart{display:flex;align-items:flex-end;gap:4px;height:80px;padding:8px 0}
+.bar{min-width:20px;border-radius:3px 3px 0 0;transition:.3s}
+.bar-label{font-size:9px;color:var(--muted);text-align:center;margin-top:4px}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="top-bar">
+  <h1>&#128276; 推送可靠性监控</h1>
+  <span class="meta">{{ clock }} &middot; 刷新间隔 {{ refreshSec }}s</span>
+  <span style="flex:1"></span>
+  <el-button size="small" @click="refresh">&#128260; 刷新</el-button>
+  <el-select v-model="refreshSec" size="small" style="width:90px">
+    <el-option :value="5" label="5s"/>
+    <el-option :value="10" label="10s"/>
+    <el-option :value="30" label="30s"/>
+    <el-option :value="0" label="关闭"/>
+  </el-select>
+</div>
+<div class="main">
+<div class="sidebar">
+  <div class="nav-item" :class="{active:tab==='overview'}" @click="tab='overview'">&#128202; 概览</div>
+  <div class="nav-item" :class="{active:tab==='tasks'}" @click="tab='tasks'">&#128203; 推送任务</div>
+  <div class="nav-item" :class="{active:tab==='deadletter'}" @click="tab='deadletter'">&#128128; 死信队列</div>
+  <div class="nav-item" :class="{active:tab==='breakers'}" @click="tab='breakers'">&#9889; 断路器</div>
+</div>
+<div class="content">
+
+<!-- ===== Overview ===== -->
+<div v-if="tab==='overview'">
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="label">SUCCESS</div><div class="value" style="color:var(--success)">{{ stats.success||0 }}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">PENDING</div><div class="value" style="color:var(--accent)">{{ stats.pending||0 }}</div>
+      <div v-if="stats.pending>0" style="font-size:10px;color:var(--accent);margin-top:4px">等待发送中，即将处理</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">RETRYING</div><div class="value" style="color:var(--warn)">{{ (stats.inMemoryRetry||0)+(stats.retryScheduled||0) }}</div>
+      <div v-if="(stats.inMemoryRetry||0)+(stats.retryScheduled||0)>0" style="font-size:10px;color:var(--warn);margin-top:4px">正在自动重试，无需手动干预</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">DEAD LETTER</div><div class="value" style="color:#ff6b6b">{{ stats.deadLetter||0 }}</div>
+      <div v-if="stats.deadLetter>0" style="font-size:10px;color:var(--danger);margin-top:4px">未能送达，需手动重投</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">CIRCUIT OPEN</div><div class="value" style="color:var(--purple)">{{ stats.circuitOpen||0 }}</div>
+      <div v-if="stats.circuitOpen>0" style="font-size:10px;color:var(--purple);margin-top:4px">目标端点暂时不可达，已暂停推送</div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>&#9881;&#65039; 重试策略配置 (Sprint 2 分级)</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;font-size:12px">
+      <div style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:10px">
+        <div style="color:var(--danger);font-weight:600;margin-bottom:4px">ALERT 报警</div>
+        <div>最大重试: <b>12 次</b></div>
+        <div>最大间隔: <b>30 分钟</b></div>
+        <div style="color:var(--muted);margin-top:4px">告警必须送达</div>
+      </div>
+      <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:8px;padding:10px">
+        <div style="color:var(--success);font-weight:600;margin-bottom:4px">REALTIME_DATA 实时数据</div>
+        <div>最大重试: <b>3 次</b></div>
+        <div>最大间隔: <b>5 分钟</b></div>
+        <div style="color:var(--muted);margin-top:4px">过时数据无意义</div>
+      </div>
+      <div style="background:rgba(6,182,212,.08);border:1px solid rgba(6,182,212,.2);border-radius:8px;padding:10px">
+        <div style="color:var(--info);font-weight:600;margin-bottom:4px">DEVICE_STATUS 设备状态</div>
+        <div>最大重试: <b>8 次</b></div>
+        <div>最大间隔: <b>10 分钟</b></div>
+        <div style="color:var(--muted);margin-top:4px">中等重要</div>
+      </div>
+      <div style="background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.2);border-radius:8px;padding:10px">
+        <div style="color:var(--muted);font-weight:600;margin-bottom:4px">其他类型</div>
+        <div>最大重试: <b>5 次</b></div>
+        <div>最大间隔: <b>5 分钟</b></div>
+        <div style="color:var(--muted);margin-top:4px">默认兜底策略</div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>&#128202; 状态分布</h3>
+    <div class="bar-chart">
+      <div v-for="s in barData" :key="s.label" style="display:flex;flex-direction:column;align-items:center;flex:1">
+        <div class="bar" :style="{height:s.count>0?Math.max(s.count/maxCount*80,4)+'px':'2px',background:s.color}"></div>
+        <div class="bar-label">{{ s.label }}</div>
+        <div class="bar-label">{{ s.count }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>&#9889; 断路器 ({{ breakers.length }} 个端点)</h3>
+    <div v-if="breakers.length===0" style="color:var(--muted);font-size:13px">暂无活跃断路器</div>
+    <div v-for="cb in breakers" :key="cb.endpointUrl" class="cb-card">
+      <span :class="'cb-dot '+cb.state"></span>
+      <span :class="'tag tag-'+cb.state">{{ cb.state }}</span>
+      <span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ cb.endpointUrl }}</span>
+      <el-button v-if="cb.state!=='CLOSED'" size="small" type="warning" @click="resetBreaker(cb.endpointUrl)">Reset</el-button>
+    </div>
+  </div>
+  <div class="card">
+    <h3>&#128197; 最近推送任务</h3>
+    <div v-if="recentTasks.length===0" style="color:var(--muted);font-size:13px">暂无任务</div>
+    <div v-for="t in recentTasks.slice(0,10)" :key="t.id" class="task-row" @click="selectedTask=t;tab='tasks'">
+      <span :class="'tag tag-'+t.dataType">{{ t.dataType }}</span>
+      <span :class="'tag tag-'+t.status">{{ t.status }}</span>
+      <span style="flex:1;font-size:12px;color:var(--muted)">#{{ t.id }} &rarr; {{ t.endpointUrl?.substring(0,50) }}</span>
+      <span style="font-size:11px;color:var(--muted)">retry: {{ t.retryCount }}/{{ t.maxRetries }}</span>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Tasks ===== -->
+<div v-if="tab==='tasks'">
+  <div class="card">
+    <h3>&#128203; 推送任务列表</h3>
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <el-select v-model="filterStatus" placeholder="状态筛选" size="small" clearable style="width:150px">
+        <el-option v-for="s in statuses" :key="s" :value="s" :label="s"/>
+      </el-select>
+      <el-select v-model="filterType" placeholder="类型筛选" size="small" clearable style="width:150px">
+        <el-option v-for="t in dataTypes" :key="t" :value="t" :label="t"/>
+      </el-select>
+      <el-button size="small" @click="loadTasks">查询</el-button>
+    </div>
+    <div class="task-list">
+      <div v-for="t in tasks" :key="t.id" class="task-row" :class="{selected:selectedTask?.id===t.id}" @click="selectedTask=t">
+        <span :class="'tag tag-'+t.dataType">{{ t.dataType }}</span>
+        <span :class="'tag tag-'+t.status">{{ statusLabel(t.status) }}</span>
+        <span style="font-size:12px;flex:1">#{{ t.id }} &rarr; {{ t.endpointUrl?.substring(0,40) }}</span>
+        <span style="font-size:11px;color:var(--muted)">{{ t.retryCount }}/{{ t.maxRetries }} 次</span>
+        <span v-if="t.status==='IN_MEMORY_RETRY'||t.status==='RETRY_SCHEDULED'" style="font-size:10px;color:var(--warn)">{{ statusHint(t) }}</span>
+        <span style="font-size:11px;color:var(--muted)">{{ formatTime(t.createdAt) }}</span>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:center;gap:8px;margin-top:12px">
+      <el-button size="small" :disabled="page===0" @click="page--;loadTasks()">&#8592; 上一页</el-button>
+      <span style="font-size:12px;color:var(--muted);line-height:28px">Page {{ page+1 }}</span>
+      <el-button size="small" @click="page++;loadTasks()">下一页 &#8594;</el-button>
+    </div>
+  </div>
+  <div v-if="selectedTask" class="card">
+    <h3>&#128270; 任务 #{{ selectedTask.id }} 详情</h3>
+    <div style="display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:13px;margin-bottom:12px">
+      <span style="color:var(--muted)">Subscription</span><span>{{ selectedTask.subscriptionId }}</span>
+      <span style="color:var(--muted)">Endpoint</span><span>{{ selectedTask.endpointUrl }}</span>
+      <span style="color:var(--muted)">Data Type</span><span><span :class="'tag tag-'+selectedTask.dataType">{{ selectedTask.dataType }}</span></span>
+      <span style="color:var(--muted)">Status</span><span><span :class="'tag tag-'+selectedTask.status">{{ selectedTask.status }}</span></span>
+      <span style="color:var(--muted)">Retries</span><span>{{ selectedTask.retryCount }} / {{ selectedTask.maxRetries }}</span>
+      <span style="color:var(--muted)">Priority</span><span>{{ selectedTask.priority }}</span>
+      <span style="color:var(--muted)">Created</span><span>{{ selectedTask.createdAt }}</span>
+      <span style="color:var(--muted)">Last Attempt</span><span>{{ selectedTask.lastAttemptAt || '-' }}</span>
+      <span style="color:var(--muted)">Next Retry</span><span>{{ selectedTask.nextRetryAt || '-' }}</span>
+      <span v-if="selectedTask.lastError" style="color:var(--muted)">Error</span>
+      <span v-if="selectedTask.lastError" style="color:var(--danger)">{{ selectedTask.lastError }}</span>
+    </div>
+    <h4 style="font-size:13px;margin-bottom:8px">Payload</h4>
+    <div class="json-viewer" v-html="highlightJson(selectedTask.payload)"></div>
+  </div>
+</div>
+
+<!-- ===== Dead Letters ===== -->
+<div v-if="tab==='deadletter'">
+  <div class="card">
+    <h3>&#128128; 死信队列 ({{ stats.deadLetter||0 }} 条)</h3>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <el-button size="small" @click="loadDeadLetters">&#128260; 刷新</el-button>
+    </div>
+    <div v-if="deadLetters.length===0" style="color:var(--muted);font-size:13px;text-align:center;padding:40px">暂无死信记录</div>
+    <div v-for="t in deadLetters" :key="t.id" class="task-row">
+      <span :class="'tag tag-'+t.dataType">{{ t.dataType }}</span>
+      <span class="tag tag-DEAD_LETTER">DEAD_LETTER</span>
+      <span style="flex:1;font-size:12px">#{{ t.id }} &rarr; {{ t.endpointUrl?.substring(0,50) }}</span>
+      <span style="font-size:11px;color:var(--danger)">{{ t.lastError || 'exhausted retries' }}</span>
+      <el-button size="small" type="primary" @click="retryDeadLetter(t.id)">&#128260; 重投</el-button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Circuit Breakers ===== -->
+<div v-if="tab==='breakers'">
+  <div class="card">
+    <h3>&#9889; 断路器状态 ({{ breakers.length }} 个端点)</h3>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <el-button size="small" @click="refresh">&#128260; 刷新</el-button>
+    </div>
+    <div v-if="breakers.length===0" style="color:var(--muted);font-size:13px;text-align:center;padding:40px">
+      暂无断路器记录 — 首次推送后自动创建
+    </div>
+    <div v-for="cb in breakers" :key="cb.endpointUrl" class="cb-card" style="padding:16px">
+      <span :class="'cb-dot '+cb.state"></span>
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span :class="'tag tag-'+cb.state">{{ cb.state==='CLOSED'?'正常':cb.state==='OPEN'?'熔断保护中':'探测恢复中' }}</span>
+          <span style="font-size:12px">{{ cb.endpointUrl }}</span>
+        </div>
+        <div v-if="cb.state==='OPEN'" style="font-size:11px;color:var(--danger)">
+          目标端点连续失败，已暂停推送。系统将在 30 秒后自动尝试恢复。
+        </div>
+        <div v-else-if="cb.state==='HALF_OPEN'" style="font-size:11px;color:var(--warn)">
+          正在探测目标端点是否恢复，发送测试请求中...
+        </div>
+        <div v-else style="font-size:11px;color:var(--success)">
+          端点正常，推送畅通
+        </div>
+      </div>
+      <el-button v-if="cb.state!=='CLOSED'" size="small" type="warning" @click="resetBreaker(cb.endpointUrl)">&#128260; 立即恢复</el-button>
+    </div>
+  </div>
+</div>
+
+</div></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/vue@3.4.27/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus@2.7.0/dist/index.full.min.js"></script>
+<script>
+const{createApp,ref,reactive,computed,onMounted,onUnmounted,watch}=Vue;
+const API='http://localhost:8080';
+const STATUSES=['PENDING','IN_MEMORY_RETRY','RETRY_SCHEDULED','SUCCESS','FAILED','CIRCUIT_OPEN','DEAD_LETTER'];
+const DATA_TYPES=['ALERT','REALTIME_DATA','DEVICE_STATUS','AI_RESULT','DEVICE_INFO'];
+
+const app=createApp({
+  setup(){
+    const tab=ref('overview');
+    const clock=ref('');
+    const refreshSec=ref(5);
+    const stats=reactive({success:0,pending:0,inMemoryRetry:0,retryScheduled:0,failed:0,circuitOpen:0,deadLetter:0,openBreakers:0});
+    const breakers=reactive([]);
+    const recentTasks=reactive([]);
+    const tasks=reactive([]);
+    const deadLetters=reactive([]);
+    const selectedTask=ref(null);
+    const filterStatus=ref(null);
+    const filterType=ref(null);
+    const page=ref(0);
+    const statuses=STATUSES;
+    const dataTypes=DATA_TYPES;
+
+    const barData=computed(()=>{
+      return[
+        {label:'SUCCESS',count:stats.success,color:'#22c55e'},
+        {label:'PENDING',count:stats.pending,color:'#3b82f6'},
+        {label:'RETRY',count:(stats.inMemoryRetry||0)+(stats.retryScheduled||0),color:'#f59e0b'},
+        {label:'CIRCUIT',count:stats.circuitOpen,color:'#a855f7'},
+        {label:'FAILED',count:stats.failed,color:'#ef4444'},
+        {label:'DEAD',count:stats.deadLetter,color:'#ff6b6b'}
+      ];
+    });
+    const maxCount=computed(()=>Math.max(...barData.value.map(b=>b.count),1));
+
+    let timer;
+    function updateClock(){clock.value=new Date().toLocaleTimeString('zh-CN')}
+    onMounted(()=>{updateClock();timer=setInterval(()=>{updateClock();if(refreshSec.value>0)refresh()},refreshSec.value>0?refreshSec.value*1000:10000)});
+    onUnmounted(()=>clearInterval(timer));
+    watch(refreshSec,v=>{clearInterval(timer);timer=setInterval(()=>{updateClock();if(v>0)refresh()},v>0?v*1000:10000)});
+
+    async function refresh(){
+      try{
+        const[s,cb,t]=await Promise.all([
+          fetch(API+'/api/v1/push/stats').then(r=>r.json()),
+          fetch(API+'/api/v1/push/circuit-breakers').then(r=>r.json()),
+          fetch(API+'/api/v1/push/tasks?size=20').then(r=>r.json())
+        ]);
+        Object.assign(stats,s.data||{});
+        breakers.splice(0);breakers.push(...(cb.data||[]));
+        recentTasks.splice(0);recentTasks.push(...(t.data?.content||[]));
+      }catch(e){}
+    }
+
+    async function loadTasks(){
+      let url=API+'/api/v1/push/tasks?page='+page.value+'&size=20';
+      if(filterStatus.value)url+='&status='+filterStatus.value;
+      if(filterType.value)url+='&dataType='+filterType.value;
+      try{
+        const r=await(await fetch(url)).json();
+        tasks.splice(0);tasks.push(...(r.data?.content||[]));
+      }catch(e){}
+    }
+
+    async function loadDeadLetters(){
+      try{
+        const r=await(await fetch(API+'/api/v1/push/dead-letters?count=100')).json();
+        deadLetters.splice(0);deadLetters.push(...(r.data?.content||[]));
+      }catch(e){}
+    }
+
+    async function retryDeadLetter(id){
+      try{
+        const r=await(await fetch(API+'/api/v1/push/dead-letters/'+id+'/retry',{method:'POST'})).json();
+        if(r.code===200){ElementPlus.ElMessage.success('重投成功');loadDeadLetters();refresh();}
+        else ElementPlus.ElMessage.error(r.message);
+      }catch(e){ElementPlus.ElMessage.error('请求失败')}
+    }
+
+    async function resetBreaker(url){
+      try{
+        const r=await(await fetch(API+'/api/v1/push/circuit-breakers/reset?endpointUrl='+encodeURIComponent(url),{method:'POST'})).json();
+        if(r.code===200){ElementPlus.ElMessage.success('断路器已重置');refresh();}
+      }catch(e){}
+    }
+
+    function formatTime(t){if(!t)return'';return t.replace(/T.*/,'')+' '+t.replace(/.*T/,'').substring(0,8)}
+    function statusLabel(s){
+      const m={'SUCCESS':'已送达','PENDING':'等待发送','IN_MEMORY_RETRY':'快速重试中','RETRY_SCHEDULED':'定时重试中','FAILED':'发送失败','CIRCUIT_OPEN':'熔断保护中','DEAD_LETTER':'未能送达'};
+      return m[s]||s;
+    }
+    function statusHint(t){
+      if(t.status==='IN_MEMORY_RETRY')return '系统正在自动重试';
+      if(t.status==='RETRY_SCHEDULED')return '下次重试: '+(t.nextRetryAt?formatTime(t.nextRetryAt):'计算中');
+      if(t.status==='CIRCUIT_OPEN')return '目标端点连续失败，已暂停推送';
+      if(t.status==='DEAD_LETTER')return '已耗尽重试次数，可手动重投';
+      return '';
+    }
+    function highlightJson(str){
+      if(!str)return'';
+      let s=typeof str==='string'?str:JSON.stringify(str,null,2);
+      try{const o=JSON.parse(str);s=JSON.stringify(o,null,2)}catch(e){}
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"([^"]+)"(?=\s*:)/g,'<span class="key">"$1"</span>')
+        .replace(/:\s*"([^"]*)"/g,': <span class="str">"$1"</span>')
+        .replace(/:\s*(\d+\.?\d*)/g,': <span class="num">$1</span>')
+        .replace(/:\s*(true|false)/g,': <span class="bool">$1</span>');
+    }
+
+    return{tab,clock,refreshSec,stats,breakers,recentTasks,tasks,deadLetters,selectedTask,
+      filterStatus,filterType,page,statuses,dataTypes,barData,maxCount,
+      refresh,loadTasks,loadDeadLetters,retryDeadLetter,resetBreaker,
+      formatTime,statusLabel,statusHint,highlightJson};
+  }
+});
+app.use(ElementPlus);
+app.mount('#app');
+</script>
+</body>
+</html>
