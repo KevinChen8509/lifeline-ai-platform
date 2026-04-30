@@ -1,0 +1,214 @@
+# ─────────────────────────────────────────────────────────────────
+# 排水设备数据点 Schema 定义
+# Sprint 2 — 定义 → 校验 → 展示
+# ─────────────────────────────────────────────────────────────────
+
+LC:
+  displayName: 液位计
+  modelPrefix: LC
+  domain: DRAINAGE
+  primaryMetric: water_level
+  dataPoints:
+    water_level:
+      displayName: 液位
+      unit: m
+      dataType: DOUBLE
+      primary: true
+      rangeMin: 0.0
+      rangeMax: 50.0
+    air_height:
+      displayName: 空高
+      unit: m
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 50.0
+    elevation_level:
+      displayName: 高程液位
+      unit: m
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 1000.0
+    battery:
+      displayName: 电量
+      unit: "%"
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 100.0
+    signal:
+      displayName: 信号强度
+      unit: dBm
+      dataType: INTEGER
+      primary: false
+      rangeMin: -150.0
+      rangeMax: 0.0
+
+LL:
+  displayName: 流量计
+  modelPrefix: LL
+  domain: DRAINAGE
+  primaryMetric: instant_flow
+  dataPoints:
+    instant_flow:
+      displayName: 瞬时流量
+      unit: m³/h
+      dataType: DOUBLE
+      primary: true
+      rangeMin: 0.0
+      rangeMax: 10000.0
+    water_level:
+      displayName: 液位
+      unit: m
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 50.0
+    flow_velocity:
+      displayName: 流速
+      unit: m/s
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 10.0
+    total_flow:
+      displayName: 累计流量
+      unit: m³
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 999999.0
+    battery:
+      displayName: 电量
+      unit: "%"
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 100.0
+    signal:
+      displayName: 信号强度
+      unit: dBm
+      dataType: INTEGER
+      primary: false
+      rangeMin: -150.0
+      rangeMax: 0.0
+
+YL:
+  displayName: 雨量计
+  modelPrefix: YL
+  domain: DRAINAGE
+  primaryMetric: hourly_rainfall
+  dataPoints:
+    hourly_rainfall:
+      displayName: 小时降雨量
+      unit: mm
+      dataType: DOUBLE
+      primary: true
+      rangeMin: 0.0
+      rangeMax: 500.0
+    rainfall_5min:
+      displayName: 5分钟降雨量
+      unit: mm
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 100.0
+    current_rainfall:
+      displayName: 当前降雨量
+      unit: mm
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 5000.0
+    rain_status:
+      displayName: 降雨状态
+      unit: ""
+      dataType: INTEGER
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 4.0
+    battery:
+      displayName: 电量
+      unit: "%"
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 100.0
+    signal:
+      displayName: 信号强度
+      unit: dBm
+      dataType: INTEGER
+      primary: false
+      rangeMin: -150.0
+      rangeMax: 0.0
+
+SZ:
+  displayName: 水质一体机
+  modelPrefix: SZ
+  domain: DRAINAGE
+  primaryMetric: cod
+  dataPoints:
+    cod:
+      displayName: COD
+      unit: mg/L
+      dataType: DOUBLE
+      primary: true
+      rangeMin: 0.0
+      rangeMax: 1000.0
+    ph:
+      displayName: pH
+      unit: ""
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 14.0
+    ammonia_nitrogen:
+      displayName: 氨氮
+      unit: mg/L
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 50.0
+    turbidity:
+      displayName: 浊度
+      unit: NTU
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 10000.0
+    conductivity:
+      displayName: 电导率
+      unit: μS/cm
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 50000.0
+    dissolved_oxygen:
+      displayName: 溶解氧
+      unit: mg/L
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 20.0
+    water_temp:
+      displayName: 水温
+      unit: ℃
+      dataType: DOUBLE
+      primary: false
+      rangeMin: -10.0
+      rangeMax: 60.0
+    battery:
+      displayName: 电量
+      unit: "%"
+      dataType: DOUBLE
+      primary: false
+      rangeMin: 0.0
+      rangeMax: 100.0
+    signal:
+      displayName: 信号强度
+      unit: dBm
+      dataType: INTEGER
+      primary: false
+      rangeMin: -150.0
+      rangeMax: 0.0

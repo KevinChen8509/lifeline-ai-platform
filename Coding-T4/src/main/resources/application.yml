@@ -1,0 +1,55 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/iot_platform;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+
+push:
+  retry:
+    base-delay-ms: 5000
+    jitter: 0.25
+    # 按数据类型分级重试策略 (John's Sprint 2 decision)
+    profiles:
+      ALERT:
+        max-attempts: 12
+        max-delay-ms: 1800000    # 30min
+      REALTIME_DATA:
+        max-attempts: 3
+        max-delay-ms: 300000     # 5min
+      DEVICE_STATUS:
+        max-attempts: 8
+        max-delay-ms: 600000     # 10min
+      default:
+        max-attempts: 5
+        max-delay-ms: 300000     # 5min
+  circuit-breaker:
+    window-size: 10
+    failure-threshold: 0.3
+    open-duration-ms: 30000
+    half-open-probes: 3
+  throttle:
+    rate-limit-per-minute: 100
+    alarm-cooldown-seconds: 300
+  scheduler:
+    poll-interval-ms: 30000
+    batch-size: 50
+
+logging:
+  level:
+    com.iot.platform: DEBUG
+    org.hibernate.SQL: WARN

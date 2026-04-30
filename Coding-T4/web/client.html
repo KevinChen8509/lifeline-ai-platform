@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>IoT 订阅数据接收客户端</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.7.0/dist/index.css">
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--success:#22c55e;--warn:#f59e0b;--danger:#ef4444;--info:#06b6d4}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.top-bar{background:var(--card);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;gap:16px}
+.top-bar h1{font-size:18px;font-weight:600}
+.conn-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px}
+.conn-dot.on{background:var(--success);box-shadow:0 0 8px rgba(34,197,94,.5)}
+.conn-dot.off{background:var(--danger)}
+.top-bar .meta{font-size:12px;color:var(--muted)}
+.main{display:flex;height:calc(100vh - 53px)}
+.sidebar{width:180px;background:var(--card);border-right:1px solid var(--border);padding:8px 0;flex-shrink:0}
+.sidebar .nav-item{padding:10px 16px;cursor:pointer;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px;transition:.2s}
+.sidebar .nav-item:hover{background:rgba(59,130,246,.1);color:var(--text)}
+.sidebar .nav-item.active{color:var(--accent);background:rgba(59,130,246,.12);border-right:3px solid var(--accent)}
+.content{flex:1;padding:20px;overflow-y:auto}
+.stats-row{display:flex;gap:12px;margin-bottom:16px}
+.stat-card{flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;position:relative;overflow:hidden}
+.stat-card .label{font-size:12px;color:var(--muted);margin-bottom:4px}
+.stat-card .value{font-size:26px;font-weight:700}
+.stat-card .dot{position:absolute;top:12px;right:12px;width:8px;height:8px;border-radius:50%}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+.card h3{font-size:14px;font-weight:600;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+.event-list{max-height:calc(100vh - 280px);overflow-y:auto}
+.event-item{padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:12px}
+.event-item:hover{border-color:var(--accent);background:rgba(59,130,246,.05)}
+.event-item.selected{border-color:var(--accent);background:rgba(59,130,246,.1)}
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.tag-ALERT{background:rgba(239,68,68,.15);color:var(--danger)}
+.tag-REALTIME_DATA{background:rgba(34,197,94,.15);color:var(--success)}
+.tag-DEVICE_STATUS{background:rgba(6,182,212,.15);color:var(--info)}
+.tag-DEVICE_INFO{background:rgba(168,85,247,.15);color:#a855f7}
+.tag-AI_RESULT{background:rgba(245,158,11,.15);color:var(--warn)}
+.json-viewer{background:#0c1222;border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'Cascadia Code',Consolas,monospace;font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:500px;overflow-y:auto;line-height:1.6}
+.json-viewer .key{color:#7dd3fc}.json-viewer .str{color:#86efac}.json-viewer .num{color:#fbbf24}.json-viewer .bool{color:#c084fc}
+.flow-vis{display:flex;align-items:center;gap:6px;padding:12px 0;flex-wrap:wrap}
+.flow-node{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 14px;text-align:center;font-size:12px}
+.flow-node.active{border-color:var(--accent);box-shadow:0 0 10px rgba(59,130,246,.3)}
+.flow-node.done{border-color:var(--success)}
+.flow-arrow{color:var(--muted);font-size:16px}
+/* 设备监控卡片 */
+.device-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;margin-bottom:16px}
+.device-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;position:relative;overflow:hidden;transition:.2s}
+.device-card:hover{border-color:var(--accent);box-shadow:0 0 20px rgba(59,130,246,.1)}
+.device-card .header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.device-card .header .title{font-size:14px;font-weight:600;display:flex;align-items:center;gap:6px}
+.device-card .header .status{font-size:11px;padding:2px 8px;border-radius:10px}
+.device-card .header .status.online{background:rgba(34,197,94,.15);color:var(--success)}
+.device-card .header .status.offline{background:rgba(239,68,68,.15);color:var(--danger)}
+.device-card .viz{display:flex;align-items:center;justify-content:center;min-height:140px;margin-bottom:12px}
+.device-card .metrics{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.device-card .metric{font-size:12px;display:flex;justify-content:space-between;padding:4px 8px;border-radius:4px;background:rgba(255,255,255,.03)}
+.device-card .metric .name{color:var(--muted)}
+.device-card .metric .val{font-weight:600;font-variant-numeric:tabular-nums}
+.device-card .metric .val.warn{color:var(--warn)}
+.device-card .metric .val.danger{color:var(--danger)}
+.device-card .alert-badge{position:absolute;top:12px;right:12px;background:var(--danger);color:#fff;font-size:11px;padding:2px 8px;border-radius:10px;animation:pulse 1.5s infinite}
+/* 报警列表 */
+.alarm-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;font-size:13px}
+.alarm-row .sev{min-width:60px;text-align:center}
+.sev-CRITICAL{background:rgba(239,68,68,.15);color:var(--danger)}
+.sev-WARNING{background:rgba(245,158,11,.15);color:var(--warn)}
+.sev-INFO{background:rgba(6,182,212,.15);color:var(--info)}
+.el-input__inner,.el-textarea__inner,.el-select__wrapper{background:#0f172a!important;color:var(--text)!important;border-color:var(--border)!important}
+.el-form-item__label{color:var(--muted)!important}
+.el-table{--el-table-bg-color:var(--card);--el-table-tr-bg-color:var(--card);--el-table-header-bg-color:#162032;--el-table-row-hover-bg-color:#1a2744;--el-table-border-color:var(--border);--el-table-text-color:var(--text);--el-table-header-text-color:var(--muted)}
+.empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
+.empty-state .icon{font-size:48px;margin-bottom:12px;opacity:.5}
+.empty-state p{font-size:14px}
+.pulse{animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="top-bar">
+  <h1>&#128225; 订阅数据接收客户端</h1>
+  <span :class="'conn-dot '+(connected?'on':'off')"></span>
+  <span class="meta">{{ connected?'SSE 已连接':'SSE 断开' }} &middot; {{ events.length }} 条 &middot; {{ clock }}</span>
+  <span style="flex:1"></span>
+  <el-button size="small" @click="clearEvents">&#128465; 清空</el-button>
+  <el-button size="small" type="primary" @click="reconnect">&#128260; 重连</el-button>
+</div>
+<div class="main">
+<div class="sidebar">
+  <div class="nav-item" :class="{active:activeTab==='stream'}" @click="activeTab='stream'">&#128227; 实时数据</div>
+  <div class="nav-item" :class="{active:activeTab==='monitor'}" @click="activeTab='monitor'">&#128202; 设备监控</div>
+  <div class="nav-item" :class="{active:activeTab==='alarms'}" @click="activeTab='alarms';loadAlarms()'">&#128680; 报警列表</div>
+  <div class="nav-item" :class="{active:activeTab==='trigger'}" @click="activeTab='trigger'">&#9889; 触发测试</div>
+  <div class="nav-item" :class="{active:activeTab==='detail'}" @click="activeTab='detail'">&#128270; 事件详情</div>
+  <div class="nav-item" :class="{active:activeTab==='flow'}" @click="activeTab='flow'">&#128736; 端到端流程</div>
+</div>
+<div class="content">
+
+<!-- ========== 实时数据 ========== -->
+<div v-if="activeTab==='stream'">
+  <div class="stats-row">
+    <div class="stat-card"><div class="label">总接收</div><div class="value">{{ events.length }}</div></div>
+    <div class="stat-card"><div class="label">ALERT</div><div class="value" style="color:var(--danger)">{{ countByType('ALERT') }}</div><div class="dot" style="background:var(--danger)"></div></div>
+    <div class="stat-card"><div class="label">REALTIME_DATA</div><div class="value" style="color:var(--success)">{{ countByType('REALTIME_DATA') }}</div><div class="dot" style="background:var(--success)"></div></div>
+    <div class="stat-card"><div class="label">DEVICE_STATUS</div><div class="value" style="color:var(--info)">{{ countByType('DEVICE_STATUS') }}</div><div class="dot" style="background:var(--info)"></div></div>
+    <div class="stat-card"><div class="label">AI_RESULT</div><div class="value" style="color:var(--warn)">{{ countByType('AI_RESULT') }}</div><div class="dot" style="background:var(--warn)"></div></div>
+  </div>
+  <div class="card">
+    <h3>&#128227; 事件流 <span style="font-weight:400;font-size:12px;color:var(--muted)">&mdash; 点击查看详情</span></h3>
+    <div v-if="events.length===0" class="empty-state">
+      <div class="icon">&#128230;</div>
+      <p>等待接收数据...</p>
+      <p style="font-size:12px;margin-top:8px">请先到「端到端流程」创建订阅和阈值，再到「触发测试」上报数据</p>
+    </div>
+    <div class="event-list">
+      <div v-for="e in events" :key="e.id" class="event-item" :class="{selected:selectedId===e.id}" @click="selectEvent(e)">
+        <span :class="'tag tag-'+e.type">{{ e.type }}</span>
+        <span style="flex:1;font-size:13px">{{ e.payload?.deviceId || e.payload?.eventId || e.eventId }}</span>
+        <span style="font-size:11px;color:var(--muted)">{{ formatTime(e.receivedAt) }}</span>
+        <span v-if="e.payload?.priority" :class="'tag tag-'+(e.payload.priority==='CRITICAL'?'ALERT':e.payload.priority==='WARNING'?'REALTIME_DATA':'DEVICE_STATUS')">{{ e.payload.priority }}</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 设备监控 ========== -->
+<div v-if="activeTab==='monitor'">
+  <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
+    <h3 style="font-size:16px;font-weight:600">&#128202; 设备实时监控</h3>
+    <span style="font-size:12px;color:var(--muted)">数据来自最新 SSE 推送</span>
+    <span style="flex:1"></span>
+    <el-button size="small" @click="loadDeviceSchemas">&#128260; 刷新 Schema</el-button>
+  </div>
+  <div v-if="Object.keys(latestDeviceData).length===0" class="empty-state">
+    <div class="icon">&#128202;</div>
+    <p>暂无设备数据</p>
+    <p style="font-size:12px;margin-top:8px">请先到「触发测试」上报数据，或等待 SSE 推送</p>
+  </div>
+  <div class="device-grid">
+    <div v-for="(data,code) in latestDeviceData" :key="code" class="device-card">
+      <div v-if="data._alert" class="alert-badge">&#128680; 报警</div>
+      <div class="header">
+        <div class="title">{{ getDeviceIcon(data._type) }} {{ code }}</div>
+        <span :class="'status '+(data._ts&&Date.now()-data._ts<30000?'online':'offline')">{{ data._ts&&Date.now()-data._ts<30000?'在线':'离线' }}</span>
+      </div>
+      <div class="viz">
+        <!-- LC: 管道液位图 -->
+        <svg v-if="data._type==='LC'" width="120" height="140" :data-value="data.water_level||0">
+          <defs><linearGradient id="wg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#1e40af"/></linearGradient></defs>
+          <rect x="20" y="10" width="80" height="120" rx="8" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+          <rect x="22" :y="122-Math.min((data.water_level||0)/50*118,118)" width="76" :height="Math.min((data.water_level||0)/50*118,118)" rx="6" fill="url(#wg)" opacity="0.8"/>
+          <line v-if="2.5" x1="18" :y1="122-2.5/50*118" x2="102" :y2="122-2.5/50*118" stroke="#ef4444" stroke-width="2" stroke-dasharray="6,3"/>
+          <text x="60" y="70" text-anchor="middle" fill="#e2e8f0" font-size="18" font-weight="bold">{{ (data.water_level||0).toFixed(2) }}</text>
+          <text x="60" y="86" text-anchor="middle" fill="#94a3b8" font-size="11">m</text>
+        </svg>
+        <!-- LL: 流量显示 -->
+        <svg v-else-if="data._type==='LL'" width="120" height="140">
+          <circle cx="60" cy="60" r="50" fill="none" stroke="#334155" stroke-width="6"/>
+          <circle cx="60" cy="60" r="50" fill="none" stroke="#22c55e" stroke-width="6" :stroke-dasharray="(data.instant_flow||0)/10000*314+' 314'" transform="rotate(-90 60 60)" stroke-linecap="round"/>
+          <text x="60" y="55" text-anchor="middle" fill="#e2e8f0" font-size="16" font-weight="bold">{{ (data.instant_flow||0).toFixed(1) }}</text>
+          <text x="60" y="72" text-anchor="middle" fill="#94a3b8" font-size="10">m³/h</text>
+          <text x="60" y="120" text-anchor="middle" fill="#94a3b8" font-size="10">流速 {{ (data.flow_velocity||0).toFixed(2) }} m/s</text>
+        </svg>
+        <!-- YL: 雨量计 -->
+        <svg v-else-if="data._type==='YL'" width="120" height="140">
+          <rect x="30" y="15" width="60" height="110" rx="4" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+          <rect x="32" :y="123-Math.min((data.hourly_rainfall||0)/500*106,106)" width="56" :height="Math.min((data.hourly_rainfall||0)/500*106,106)" rx="3" fill="#06b6d4" opacity="0.7"/>
+          <text x="60" y="75" text-anchor="middle" fill="#e2e8f0" font-size="16" font-weight="bold">{{ (data.hourly_rainfall||0).toFixed(1) }}</text>
+          <text x="60" y="92" text-anchor="middle" fill="#94a3b8" font-size="10">mm/h</text>
+          <text x="60" y="138" text-anchor="middle" fill="var(--info)" font-size="10">{{ rainLevel(data.hourly_rainfall||0) }}</text>
+        </svg>
+        <!-- SZ: 水质仪表盘 -->
+        <svg v-else-if="data._type==='SZ'" width="200" height="140">
+          <g v-for="(m,i) in szMetrics(data)" :key="i" :transform="'translate('+(i*45+25)+',55)'">
+            <circle r="18" fill="none" :stroke="m.color" stroke-width="4" :stroke-dasharray="m.pct*1.13+' 113'" transform="rotate(-90)" stroke-linecap="round"/>
+            <text y="4" text-anchor="middle" :fill="m.color" font-size="9" font-weight="bold">{{ m.val }}</text>
+            <text y="35" text-anchor="middle" fill="#94a3b8" font-size="8">{{ m.name }}</text>
+          </g>
+          <text x="100" y="130" text-anchor="middle" fill="#94a3b8" font-size="10">COD: {{ (data.cod||0).toFixed(1) }} mg/L · pH: {{ (data.ph||0).toFixed(1) }}</text>
+        </svg>
+        <!-- Default -->
+        <div v-else style="text-align:center;color:var(--muted);font-size:13px">{{ data._type }}</div>
+      </div>
+      <div class="metrics">
+        <div v-for="(v,k) in data" :key="k" class="metric" v-show="!k.startsWith('_')&&v!=null&&typeof v!=='object'">
+          <span class="name">{{ getDataPointName(data._type,k) }}</span>
+          <span :class="'val'+(isValueHigh(data._type,k,v)?' danger':'')">{{ typeof v==='number'?v.toFixed(2):v }}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 报警列表 ========== -->
+<div v-if="activeTab==='alarms'">
+  <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
+    <h3 style="font-size:16px;font-weight:600">&#128680; 报警记录</h3>
+    <el-select v-model="alarmFilter.severity" size="small" style="width:120px" placeholder="级别" clearable>
+      <el-option label="CRITICAL" value="CRITICAL"/><el-option label="WARNING" value="WARNING"/><el-option label="INFO" value="INFO"/>
+    </el-select>
+    <el-select v-model="alarmFilter.deviceType" size="small" style="width:120px" placeholder="设备类型" clearable>
+      <el-option v-for="dt in deviceTypes" :key="dt.code" :label="dt.name" :value="dt.code"/>
+    </el-select>
+    <span style="flex:1"></span>
+    <el-button size="small" @click="loadAlarms">&#128260; 刷新</el-button>
+  </div>
+  <div v-if="alarms.length===0" class="empty-state">
+    <div class="icon">&#128680;</div>
+    <p>暂无报警记录</p>
+  </div>
+  <div v-for="a in filteredAlarms" :key="a.alarmNo" class="alarm-row">
+    <span :class="'sev tag sev-'+a.severity">{{ a.severity }}</span>
+    <span :class="'tag tag-'+(a.deviceType==='LC'?'REALTIME_DATA':a.deviceType==='SZ'?'AI_RESULT':'DEVICE_STATUS')">{{ a.deviceType }}</span>
+    <span style="flex:1">{{ a.metricName }} {{ a.operator }} {{ a.thresholdValue }} → <b>{{ a.triggerValue }}</b></span>
+    <span style="font-size:11px;color:var(--muted)">{{ a.deviceCode }}</span>
+    <span style="font-size:11px;color:var(--muted)">{{ formatTime(a.createdAt) }}</span>
+    <span :class="'tag tag-'+(a.status==='ACTIVE'?'ALERT':'REALTIME_DATA')">{{ a.status }}</span>
+  </div>
+</div>
+
+<!-- ========== 触发测试 ========== -->
+<div v-if="activeTab==='trigger'">
+  <div class="card"><h3>&#9889; 设备数据上报</h3>
+    <el-form label-width="100px" size="small">
+      <el-row :gutter="16">
+        <el-col :span="8">
+          <el-form-item label="设备类型">
+            <el-select v-model="trigger.deviceType" @change="onTypeChange" style="width:100%">
+              <el-option v-for="dt in deviceTypes" :key="dt.code" :label="dt.name" :value="dt.code"/>
+            </el-select>
+          </el-form-item>
+        </el-col>
+        <el-col :span="8">
+          <el-form-item label="设备编号"><el-input v-model="trigger.deviceCode"/></el-form-item>
+        </el-col>
+        <el-col :span="8">
+          <el-form-item label="项目ID"><el-input v-model="trigger.projectId"/></el-form-item>
+        </el-col>
+      </el-row>
+    </el-form>
+  </div>
+  <div class="card"><h3>&#128200; 数据点</h3>
+    <el-form label-width="120px" size="small">
+      <el-row :gutter="16">
+        <el-col :span="8" v-for="dp in triggerDataPoints" :key="dp.key">
+          <el-form-item :label="dp.name+'('+dp.unit+')'">
+            <el-input v-model.number="trigger.data[dp.key]" :placeholder="'范围:'+dp.min+'~'+dp.max" type="number" step="0.01"/>
+          </el-form-item>
+        </el-col>
+      </el-row>
+    </el-form>
+    <div style="display:flex;gap:10px;margin-top:8px">
+      <el-button type="primary" @click="uploadNormal">&#128194; 正常上报</el-button>
+      <el-button type="danger" @click="uploadAlert">&#128293; 超阈值上报</el-button>
+      <el-button @click="fillRandom">&#127922; 随机填充</el-button>
+    </div>
+    <div v-if="uploadResult" style="margin-top:12px">
+      <div style="display:flex;gap:12px;margin-bottom:8px">
+        <span :class="'tag tag-'+(uploadResult.validated?'REALTIME_DATA':'ALERT')">{{ uploadResult.validated?'校验通过':'校验失败' }}</span>
+        <span class="tag tag-REALTIME_DATA">类型: {{ uploadResult.deviceType }}</span>
+        <span v-if="uploadResult.thresholdsMatched" :class="'tag tag-'+(uploadResult.thresholdsMatched>0?'ALERT':'REALTIME_DATA')">{{ uploadResult.thresholdsMatched }} 条报警</span>
+        <span class="tag tag-DEVICE_INFO">{{ uploadResult.subscriptionsPushed }} 次推送</span>
+      </div>
+      <div v-if="uploadResult.alarms&&uploadResult.alarms.length" style="margin-top:8px">
+        <div v-for="a in uploadResult.alarms" :key="a.alarmNo" style="background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:6px;padding:8px;margin-bottom:4px;font-size:12px">
+          <span :class="'tag tag-'+(a.severity==='CRITICAL'?'ALERT':'REALTIME_DATA')">{{ a.severity }}</span>
+          {{ a.metricName }} {{ a.operator }} {{ a.thresholdValue }} &rarr; <b>{{ a.triggerValue }}</b>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== 事件详情 ========== -->
+<div v-if="activeTab==='detail'">
+  <div v-if="selectedEvent" class="card">
+    <h3>&#128270; 事件详情 &mdash; {{ selectedEvent.type }}</h3>
+    <div style="display:flex;gap:12px;margin-bottom:12px">
+      <span :class="'tag tag-'+selectedEvent.type">{{ selectedEvent.type }}</span>
+      <span style="font-size:12px;color:var(--muted)">ID: {{ selectedEvent.eventId }}</span>
+      <span style="font-size:12px;color:var(--muted)">{{ selectedEvent.receivedAt }}</span>
+    </div>
+    <h4 style="margin-bottom:8px;font-size:13px">Payload</h4>
+    <div class="json-viewer" v-html="highlightJson(selectedEvent.payload)"></div>
+    <h4 v-if="selectedEvent.rawBody" style="margin:12px 0 8px;font-size:13px">原始信封</h4>
+    <div v-if="selectedEvent.rawBody" class="json-viewer" v-html="highlightJson(selectedEvent.rawBody)"></div>
+  </div>
+  <div v-else class="empty-state">
+    <div class="icon">&#128270;</div>
+    <p>请在「实时数据」中点击事件查看详情</p>
+  </div>
+</div>
+
+<!-- ========== 端到端流程 ========== -->
+<div v-if="activeTab==='flow'">
+  <div class="card"><h3>&#128736; 端到端流程配置</h3>
+    <div class="flow-vis">
+      <div class="flow-node" :class="{active:flowStep===0,done:flowStep>0}">&#9312; 创建订阅</div><span class="flow-arrow">&rarr;</span>
+      <div class="flow-node" :class="{active:flowStep===1,done:flowStep>1}">&#9313; 配置阈值</div><span class="flow-arrow">&rarr;</span>
+      <div class="flow-node" :class="{active:flowStep===2,done:flowStep>2}">&#9314; 上报数据</div><span class="flow-arrow">&rarr;</span>
+      <div class="flow-node" :class="{active:flowStep===3,done:flowStep>3}">&#9315; 生成报警</div><span class="flow-arrow">&rarr;</span>
+      <div class="flow-node" :class="{done:flowStep>4}">&#9316; 客户端接收</div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:12px">
+      <el-button type="primary" @click="runE2E" :loading="e2eRunning">&#9889; 一键执行完整流程</el-button>
+      <el-button @click="checkStatus">&#128196; 查询当前状态</el-button>
+    </div>
+    <div v-if="e2eLog.length" style="margin-top:12px">
+      <div v-for="(log,i) in e2eLog" :key="i" style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border)">
+        <span :style="{color:log.ok?'var(--success)':'var(--danger)'}">{{ log.ok?'&#10003;':'&#10007;' }}</span>
+        {{ log.msg }}
+      </div>
+    </div>
+  </div>
+  <div class="card"><h3>&#128196; 当前配置状态</h3>
+    <div style="display:flex;gap:20px">
+      <div><span style="color:var(--muted);font-size:12px">订阅数</span><div style="font-size:20px;font-weight:700">{{ statusInfo.subs }}</div></div>
+      <div><span style="color:var(--muted);font-size:12px">阈值规则</span><div style="font-size:20px;font-weight:700">{{ statusInfo.thresholds }}</div></div>
+      <div><span style="color:var(--muted);font-size:12px">已接收事件</span><div style="font-size:20px;font-weight:700">{{ events.length }}</div></div>
+      <div><span style="color:var(--muted);font-size:12px">报警记录</span><div style="font-size:20px;font-weight:700">{{ statusInfo.alarms }}</div></div>
+    </div>
+  </div>
+</div>
+
+</div></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/vue@3.4.27/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus@2.7.0/dist/index.full.min.js"></script>
+<script>
+const{createApp,ref,reactive,computed,onMounted,onUnmounted}=Vue;
+
+const API='http://localhost:8080';
+const DATA_POINTS={
+  LC:[{key:'water_level',name:'液位',unit:'m',min:0,max:50},{key:'air_height',name:'空高',unit:'m',min:0,max:50},{key:'elevation_level',name:'高程液位',unit:'m',min:0,max:1000}],
+  LL:[{key:'instant_flow',name:'瞬时流量',unit:'m³/h',min:0,max:10000},{key:'water_level',name:'液位',unit:'m',min:0,max:50},{key:'flow_velocity',name:'流速',unit:'m/s',min:0,max:10}],
+  YL:[{key:'hourly_rainfall',name:'小时降雨量',unit:'mm',min:0,max:500},{key:'rainfall_5min',name:'5分钟降雨量',unit:'mm',min:0,max:100}],
+  SZ:[{key:'cod',name:'COD',unit:'mg/L',min:0,max:1000},{key:'ph',name:'pH',unit:'',min:0,max:14},{key:'ammonia_nitrogen',name:'氨氮',unit:'mg/L',min:0,max:50},{key:'turbidity',name:'浊度',unit:'NTU',min:0,max:10000}],
+};
+const DEVICE_TYPES=[{code:'LC',name:'液位计'},{code:'LL',name:'流量计'},{code:'YL',name:'雨量计'},{code:'SZ',name:'水质一体机'}];
+
+const app=createApp({
+  setup(){
+    const activeTab=ref('flow');
+    const clock=ref('');
+    const connected=ref(false);
+    const events=reactive([]);
+    const selectedId=ref(null);
+    const selectedEvent=computed(()=>events.find(e=>e.id===selectedId.value));
+    const flowStep=ref(-1);
+    const e2eRunning=ref(false);
+    const e2eLog=reactive([]);
+    const statusInfo=reactive({subs:0,thresholds:0,alarms:0});
+    const uploadResult=ref(null);
+    const latestDeviceData=reactive({});
+    const schemas=reactive({});
+    const alarms=reactive([]);
+    const alarmFilter=reactive({severity:'',deviceType:''});
+
+    // Trigger form
+    const trigger=reactive({deviceType:'LC',deviceCode:'LC0101000100001',projectId:'PRJ-001',data:{}});
+    const triggerDataPoints=computed(()=>DATA_POINTS[trigger.deviceType]||[]);
+    function onTypeChange(){trigger.data={};trigger.deviceCode=trigger.deviceType+'0101000100001'}
+
+    // Clock
+    let clockTimer;
+    onMounted(()=>{const u=()=>clock.value=new Date().toLocaleTimeString('zh-CN');u();clockTimer=setInterval(u,1000);connectSSE();loadExisting();loadDeviceSchemas()});
+    onUnmounted(()=>{clearInterval(clockTimer);if(es)es.close()});
+
+    // SSE with auto-reconnect
+    let es=null;
+    let reconnectTimer=null;
+    let reconnectDelay=1000;
+    function connectSSE(){
+      if(es){try{es.close()}catch(e){}}
+      if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null}
+      es=new EventSource(API+'/webhook/events');
+      es.onopen=()=>{connected.value=true;reconnectDelay=1000};
+      es.onerror=()=>{
+        connected.value=false;
+        try{es.close()}catch(e){}
+        reconnectTimer=setTimeout(()=>{reconnectDelay=Math.min(reconnectDelay*2,10000);connectSSE()},reconnectDelay);
+      };
+      ['ALERT','REALTIME_DATA','DEVICE_STATUS','AI_RESULT','DEVICE_INFO'].forEach(t=>{
+        es.addEventListener(t,e=>{
+          try{
+            const d=JSON.parse(e.data);
+            events.unshift({...d,_ts:Date.now()});
+            if(events.length>200)events.pop();
+            // Update device monitor
+            if(d.payload&&d.payload.deviceId){
+              const devId=d.payload.deviceId;
+              if(!latestDeviceData[devId])latestDeviceData[devId]={};
+              const existing=latestDeviceData[devId];
+              if(d.payload.dataPoints){
+                d.payload.dataPoints.forEach(dp=>{existing[dp.key]=dp.value});
+              }
+              existing._type=d.payload.deviceType||existing._type;
+              existing._ts=Date.now();
+              if(t==='ALERT')existing._alert=true;else existing._alert=false;
+            }
+          }catch(ex){}
+        });
+      });
+      es.onmessage=e=>{
+        try{
+          const d=JSON.parse(e.data);
+          events.unshift({...d,_ts:Date.now()});
+          if(events.length>200)events.pop();
+          if(d.payload&&d.payload.deviceId){
+            const devId=d.payload.deviceId;
+            if(!latestDeviceData[devId])latestDeviceData[devId]={};
+            const existing=latestDeviceData[devId];
+            if(d.payload.dataPoints)d.payload.dataPoints.forEach(dp=>{existing[dp.key]=dp.value});
+            existing._type=d.payload.deviceType||existing._type;
+            existing._ts=Date.now();
+          }
+        }catch(ex){}
+      };
+    }
+    function reconnect(){reconnectDelay=1000;connectSSE()}
+    async function loadExisting(){
+      try{const r=await(await fetch(API+'/webhook/received?count=50')).json();if(r.data)r.data.forEach(e=>{if(!events.find(x=>x.id===e.id))events.push(e)})}catch(e){}
+    }
+
+    function countByType(t){return events.filter(e=>e.type===t).length}
+    function selectEvent(e){selectedId.value=e.id;activeTab.value='detail'}
+    function formatTime(t){if(!t)return'';return t.replace(/T.*/,'')+' '+t.replace(/.*T/,'').substring(0,8)}
+    function clearEvents(){
+      events.splice(0);selectedId.value=null;
+      fetch(API+'/webhook/received',{method:'DELETE'});
+    }
+
+    // Trigger
+    function fillRandom(){
+      trigger.data={};
+      triggerDataPoints.value.forEach(dp=>{trigger.data[dp.key]=+(dp.min+Math.random()*(dp.max-dp.min)*0.3).toFixed(2)});
+    }
+    async function doUpload(){
+      uploadResult.value=null;
+      try{
+        const r=await fetch(API+'/api/v1/devices/'+trigger.deviceCode+'/upload',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({projectId:trigger.projectId,domain:'DRAINAGE',dataPoints:trigger.data})
+        });
+        const j=await r.json();
+        uploadResult.value=j.data||j;
+        ElementPlus.ElMessage({type:j.code===200?'success':'error',message:j.code===200?'上报成功':'上报失败: '+j.message,duration:2000});
+      }catch(e){ElementPlus.ElMessage.error('请求失败: '+e.message)}
+    }
+    function uploadNormal(){doUpload()}
+    function uploadAlert(){
+      trigger.data={};
+      // LC: water_level > 2.5, SZ: cod > 40, YL: hourly_rainfall > 16, LL: instant_flow > 5
+      const alertMap={LC:{water_level:2.8,air_height:0.1},LL:{instant_flow:6.0,water_level:1.5},YL:{hourly_rainfall:20.0,rainfall_5min:5.0},SZ:{cod:55.0,ph:3.5}};
+      const alert=alertMap[trigger.deviceType]||{};
+      Object.assign(trigger.data,alert);
+      triggerDataPoints.value.forEach(dp=>{if(!(dp.key in trigger.data))trigger.data[dp.key]=+(dp.min+(dp.max-dp.min)*0.2).toFixed(2)});
+      doUpload();
+    }
+
+    // E2E
+    async function api(method,path,body){
+      const opt={method,headers:{'Content-Type':'application/json'}};
+      if(body)opt.body=JSON.stringify(body);
+      const r=await fetch(API+path,opt);
+      return r.json();
+    }
+    async function runE2E(){
+      e2eRunning.value=true;e2eLog.splice(0);flowStep.value=0;
+      try{
+        // Step 1: Create subscription
+        e2eLog.push({ok:true,msg:'Step 1: 创建订阅 (pushUrl → /webhook/receive)...'});
+        const r1=await api('POST','/api/v1/subscriptions',{projectId:'PRJ-001',name:'E2E-Test-Client',pushUrl:API+'/webhook/receive',encryptionMode:'PLAIN',addressMode:'UNIFIED',dataTypes:['ALERT','REALTIME_DATA'],deviceTypes:[]});
+        const subId=r1.data?.subscriptionId;
+        if(!subId){e2eLog.push({ok:false,msg:'创建订阅失败: '+r1.message});return}
+        e2eLog.push({ok:true,msg:'  subscriptionId: '+subId});
+        await api('POST','/api/v1/subscriptions/'+subId+'/activate');
+        await api('POST','/api/v1/subscriptions/'+subId+'/verify');
+        e2eLog.push({ok:true,msg:'  已激活+验证'});
+        flowStep.value=1;
+
+        // Step 2: Create threshold
+        e2eLog.push({ok:true,msg:'Step 2: 创建阈值规则 (LC water_level ≥ 2.5)...'});
+        const r2=await api('POST','/api/v1/thresholds',{scopeType:'MODEL',scopeId:'LC0101000',deviceType:'LC',metricKey:'water_level',ruleType:'THRESHOLD',ruleConfig:'{"operator":"GTE","value":2.5}',severity:'CRITICAL',projectId:'PRJ-001'});
+        e2eLog.push({ok:r2.code===200,msg:'  阈值ID: '+(r2.data?.id||'fail')});
+        flowStep.value=2;
+
+        // Step 3: Upload data
+        e2eLog.push({ok:true,msg:'Step 3: 上报超阈值数据 (water_level=2.8)...'});
+        const r3=await api('POST','/api/v1/devices/LC0101000100001/upload',{projectId:'PRJ-001',domain:'DRAINAGE',dataPoints:{water_level:2.8,air_height:0.1,elevation_level:5.0}});
+        const alarmCount=r3.data?.thresholdsMatched||0;
+        e2eLog.push({ok:alarmCount>0,msg:'  触发 '+alarmCount+' 条报警, 推送 '+r3.data?.subscriptionsPushed+' 次'});
+        flowStep.value=3;
+
+        // Step 4: Check received
+        await new Promise(r=>setTimeout(r,500));
+        const newEvents=events.filter(e=>Date.now()-e._ts<5000);
+        e2eLog.push({ok:newEvents.length>0,msg:'Step 4: 客户端接收到 '+newEvents.length+' 条事件'});
+        newEvents.forEach(e=>e2eLog.push({ok:true,msg:'  ['+e.type+'] '+(e.payload?.eventId||e.eventId)}));
+        flowStep.value=4;
+
+        // Normal upload
+        e2eLog.push({ok:true,msg:'Step 5: 上报正常数据 (water_level=1.2)...'});
+        const r4=await api('POST','/api/v1/devices/LC0101000100001/upload',{projectId:'PRJ-001',domain:'DRAINAGE',dataPoints:{water_level:1.2,air_height:1.0,elevation_level:3.0}});
+        e2eLog.push({ok:true,msg:'  推送 '+r4.data?.subscriptionsPushed+' 次实时数据'});
+
+        await new Promise(r=>setTimeout(r,500));
+        const total=events.filter(e=>Date.now()-e._ts<5000);
+        e2eLog.push({ok:true,msg:'完成! 本轮共接收 '+total.length+' 条事件'});
+        flowStep.value=5;
+
+        activeTab.value='stream';
+      }catch(e){e2eLog.push({ok:false,msg:'异常: '+e.message})}
+      finally{e2eRunning.value=false}
+    }
+
+    async function checkStatus(){
+      try{
+        const[r1,r2,r3]=await Promise.all([
+          fetch(API+'/api/v1/subscriptions/project/PRJ-001').then(r=>r.json()),
+          fetch(API+'/api/v1/thresholds/search?projectId=PRJ-001').then(r=>r.json()),
+          fetch(API+'/api/v1/alarms?page=0&size=1').then(r=>r.json()),
+        ]);
+        statusInfo.subs=r1.data?.length||0;
+        statusInfo.thresholds=r2.data?.length||0;
+        statusInfo.alarms=r3.data?.totalElements||0;
+      }catch(e){}
+    }
+
+    function highlightJson(obj){
+      let str=typeof obj==='string'?obj:JSON.stringify(obj,null,2);
+      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"([^"]+)"(?=\s*:)/g,'<span class="key">"$1"</span>')
+        .replace(/:\s*"([^"]*)"/g,': <span class="str">"$1"</span>')
+        .replace(/:\s*(\d+\.?\d*)/g,': <span class="num">$1</span>')
+        .replace(/:\s*(true|false)/g,': <span class="bool">$1</span>');
+    }
+
+    // Device monitor helpers
+    async function loadDeviceSchemas(){
+      try{const r=await(await fetch(API+'/api/v1/device-schemas')).json();if(r.data)Object.assign(schemas,r.data)}catch(e){}
+    }
+    function getDeviceIcon(type){
+      const icons={LC:'&#128167;',LL:'&#127754;',YL:'&#127783;',SZ:'&#129524;'};
+      return icons[type]||'&#128225;';
+    }
+    function getDataPointName(type,key){
+      if(schemas[type]&&schemas[type].dataPoints&&schemas[type].dataPoints[key])
+        return schemas[type].dataPoints[key].displayName;
+      return key;
+    }
+    function isValueHigh(type,key,val){
+      if(!schemas[type]||!schemas[type].dataPoints||!schemas[type].dataPoints[key])return false;
+      const dp=schemas[type].dataPoints[key];
+      return dp.primary&&val>dp.rangeMax*0.7;
+    }
+    function rainLevel(mm){
+      if(mm<2.5)return '小雨';
+      if(mm<8)return '中雨';
+      if(mm<16)return '大雨';
+      return '暴雨';
+    }
+    function szMetrics(data){
+      const params=[
+        {key:'cod',name:'COD',max:1000,color:'#f59e0b'},
+        {key:'ph',name:'pH',max:14,color:'#22c55e'},
+        {key:'turbidity',name:'浊度',max:10000,color:'#06b6d4'},
+        {key:'ammonia_nitrogen',name:'氨氮',max:50,color:'#a855f7'}
+      ];
+      return params.map(p=>({name:p.name,color:p.color,val:(data[p.key]||0).toFixed(1),pct:Math.min((data[p.key]||0)/p.max*100,100)}));
+    }
+
+    // Alarm list
+    async function loadAlarms(){
+      try{
+        const r=await(await fetch(API+'/api/v1/alarms?page=0&size=100')).json();
+        alarms.splice(0);
+        if(r.data&&r.data.content)alarms.push(...r.data.content);
+      }catch(e){}
+    }
+    const filteredAlarms=computed(()=>{
+      return alarms.filter(a=>{
+        if(alarmFilter.severity&&a.severity!==alarmFilter.severity)return false;
+        if(alarmFilter.deviceType&&a.deviceType!==alarmFilter.deviceType)return false;
+        return true;
+      });
+    });
+
+    return{
+      activeTab,clock,connected,events,selectedId,selectedEvent,flowStep,e2eRunning,e2eLog,statusInfo,uploadResult,
+      trigger,triggerDataPoints,deviceTypes:DEVICE_TYPES,onTypeChange,
+      latestDeviceData,schemas,alarms,alarmFilter,filteredAlarms,
+      countByType,selectEvent,formatTime,clearEvents,reconnect,
+      fillRandom,uploadNormal,uploadAlert,
+      loadDeviceSchemas,getDeviceIcon,getDataPointName,isValueHigh,rainLevel,szMetrics,loadAlarms,
+      runE2E,checkStatus,highlightJson
+    };
+  }
+});
+app.use(ElementPlus);
+app.mount('#app');
+</script>
+</body>
+</html>
