@@ -138,6 +138,10 @@ public class DeviceDataApplicationService {
         result.setThresholdsMatched(triggeredAlarms.size());
         result.getAlarms().addAll(triggeredAlarms.stream().map(AlarmDto::toResponse).toList());
 
+        // 6.5 报警自动恢复：检查该设备的 ACTIVE 报警是否恢复正常
+        List<AlarmRecord> recoveredAlarms = autoRecoverAlarms(req.getDeviceCode(), cleanData, enabledRules, projectId, activeSubs);
+        result.getAlarms().addAll(recoveredAlarms.stream().map(AlarmDto::toResponse).toList());
+
         // 7. 构建信封并通过 PushOrchestrator 推送
         int pushedCount = 0;
         for (SubscriptionConfig sub : activeSubs) {
@@ -146,7 +150,7 @@ public class DeviceDataApplicationService {
                 && matchesDeviceType(sub, deviceType)) {
                 AlarmRecord primaryAlarm = triggeredAlarms.get(0);
                 Map<String, Object> payload = buildAlertPayload(primaryAlarm, domain);
-                Map<String, Object> envelope = pushService.buildEnvelope("ALERT", payload, sub.getSecret());
+                Map<String, Object> envelope = buildEnvelopeForSub(sub, "ALERT", payload);
                 submitToOrchestrator(sub, "ALERT", envelope);
                 pushedCount++;
             }
@@ -155,7 +159,7 @@ public class DeviceDataApplicationService {
             if (sub.getDataTypes().contains("REALTIME_DATA")
                 && matchesDeviceType(sub, deviceType)) {
                 Map<String, Object> payload = buildRealtimePayload(req.getDeviceCode(), deviceType, projectId, domain, cleanData);
-                Map<String, Object> envelope = pushService.buildEnvelope("REALTIME_DATA", payload, sub.getSecret());
+                Map<String, Object> envelope = buildEnvelopeForSub(sub, "REALTIME_DATA", payload);
                 submitToOrchestrator(sub, "REALTIME_DATA", envelope);
                 pushedCount++;
             }
@@ -172,6 +176,13 @@ public class DeviceDataApplicationService {
         } catch (Exception e) {
             log.warn("Submit to PushOrchestrator error: {}", e.getMessage());
         }
+    }
+
+    private Map<String, Object> buildEnvelopeForSub(SubscriptionConfig sub, String type, Map<String, Object> payload) {
+        if (sub.getEncryptionMode() == SubscriptionConfig.EncryptionMode.AES && sub.getAesKey() != null) {
+            return pushService.buildEncryptedEnvelope(type, payload, sub.getSecret(), sub.getAesKey());
+        }
+        return pushService.buildEnvelope(type, payload, sub.getSecret());
     }
 
     private boolean matchesDeviceType(SubscriptionConfig sub, DeviceType deviceType) {
@@ -202,6 +213,57 @@ public class DeviceDataApplicationService {
         ));
         payload.put("status", alarm.getStatus().name());
         return payload;
+    }
+
+    /**
+     * 自动恢复：对设备的 ACTIVE 报警检查指标是否已回落正常。
+     * 如果触发值不再满足阈值条件，则标记为 RECOVERED 并推送恢复通知。
+     */
+    private List<AlarmRecord> autoRecoverAlarms(String deviceCode, Map<String, Object> cleanData,
+                                                  List<ThresholdConfig> enabledRules,
+                                                  String projectId,
+                                                  List<SubscriptionConfig> activeSubs) {
+        List<AlarmRecord> activeAlarms = alarmRepo.findByDeviceCodeAndStatus(
+            deviceCode, AlarmRecord.AlarmStatus.ACTIVE);
+        if (activeAlarms.isEmpty()) return List.of();
+
+        ThresholdEvaluator evaluator = new ThresholdEvaluator();
+        List<AlarmRecord> recovered = new ArrayList<>();
+
+        for (AlarmRecord alarm : activeAlarms) {
+            Object currentValue = cleanData.get(alarm.getMetricKey());
+            if (currentValue == null) continue;
+
+            // 检查当前值是否不再满足阈值条件
+            DataPointId dpId;
+            try {
+                dpId = DataPointId.resolve(alarm.getMetricKey(),
+                    alarm.getDeviceType());
+            } catch (IllegalArgumentException e) {
+                continue;
+            }
+
+            ThresholdEvaluator.Operator op = ThresholdEvaluator.Operator.valueOf(alarm.getOperator());
+            boolean stillTriggered = evaluator.evaluate(dpId, currentValue, op, alarm.getThresholdValue());
+
+            if (!stillTriggered) {
+                alarm.setStatus(AlarmRecord.AlarmStatus.RECOVERED);
+                alarm.setResolvedAt(java.time.LocalDateTime.now());
+                alarmRepo.save(alarm);
+                recovered.add(alarm);
+
+                // 推送恢复通知
+                for (SubscriptionConfig sub : activeSubs) {
+                    if (sub.getDataTypes().contains("ALERT") && matchesDeviceType(sub, alarm.getDeviceType())) {
+                        Map<String, Object> payload = buildAlertPayload(alarm, alarm.getDomain());
+                        payload.put("status", "RECOVERED");
+                        Map<String, Object> envelope = buildEnvelopeForSub(sub, "ALERT", payload);
+                        submitToOrchestrator(sub, "ALERT", envelope);
+                    }
+                }
+            }
+        }
+        return recovered;
     }
 
     private Map<String, Object> buildRealtimePayload(String deviceCode, DeviceType deviceType,

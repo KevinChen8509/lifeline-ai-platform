@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>报警管理仪表盘 — IoT Platform</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.7.0/dist/index.css">
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--border:#334155;--text:#e2e8f0;--muted:#94a3b8;--accent:#3b82f6;--success:#22c55e;--warn:#f59e0b;--danger:#ef4444;--info:#06b6d4;--purple:#a855f7}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.top-bar{background:var(--card);border-bottom:1px solid var(--border);padding:12px 24px;display:flex;align-items:center;justify-content:space-between}
+.top-bar h1{font-size:18px;font-weight:600;display:flex;align-items:center;gap:10px}
+.top-bar .meta{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:16px}
+.conn-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.conn-dot.on{background:var(--success);box-shadow:0 0 8px rgba(34,197,94,.5)}
+.conn-dot.off{background:var(--danger)}
+.content{padding:20px;max-width:1400px;margin:0 auto}
+/* Stats Cards */
+.stats-row{display:flex;gap:12px;margin-bottom:20px}
+.stat-card{flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px;position:relative;overflow:hidden}
+.stat-card .label{font-size:12px;color:var(--muted);margin-bottom:6px}
+.stat-card .value{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums}
+.stat-card .icon{position:absolute;right:16px;top:50%;transform:translateY(-50%);font-size:32px;opacity:.2}
+.stat-card.active{border-left:3px solid var(--danger)}
+.stat-card.critical{border-left:3px solid var(--danger)}
+.stat-card.warning{border-left:3px solid var(--warn)}
+.stat-card.recovered{border-left:3px solid var(--success)}
+.stat-card.total{border-left:3px solid var(--accent)}
+/* Charts */
+.charts-row{display:flex;gap:16px;margin-bottom:20px}
+.chart-card{flex:1;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
+.chart-card h3{font-size:14px;font-weight:600;margin-bottom:12px;color:var(--muted)}
+.chart-card canvas{width:100%;height:200px}
+/* Alarm Table */
+.table-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
+.table-card .toolbar{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.table-card h3{font-size:14px;font-weight:600;margin-bottom:12px}
+/* Tags */
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.tag-CRITICAL{background:rgba(239,68,68,.15);color:var(--danger)}
+.tag-WARNING{background:rgba(245,158,11,.15);color:var(--warn)}
+.tag-INFO{background:rgba(6,182,212,.15);color:var(--info)}
+.tag-ACTIVE{background:rgba(239,68,68,.15);color:var(--danger)}
+.tag-ACKNOWLEDGED{background:rgba(245,158,11,.15);color:var(--warn)}
+.tag-PROCESSING{background:rgba(59,130,246,.15);color:var(--accent)}
+.tag-RESOLVED{background:rgba(34,197,94,.15);color:var(--success)}
+.tag-RECOVERED{background:rgba(6,182,212,.15);color:var(--info)}
+.tag-IGNORED{background:rgba(148,163,184,.15);color:var(--muted)}
+.tag-LC{background:rgba(59,130,246,.15);color:var(--accent)}
+.tag-LL{background:rgba(34,197,94,.15);color:var(--success)}
+.tag-YL{background:rgba(245,158,11,.15);color:var(--warn)}
+.tag-SZ{background:rgba(168,85,247,.15);color:var(--purple)}
+/* Top Devices */
+.top-list{list-style:none}
+.top-list li{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.top-list li:last-child{border-bottom:none}
+.top-list .rank{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.top-list .rank.r1{background:rgba(239,68,68,.2);color:var(--danger)}
+.top-list .rank.r2{background:rgba(245,158,11,.2);color:var(--warn)}
+.top-list .rank.r3{background:rgba(59,130,246,.2);color:var(--accent)}
+.top-list .rank.rn{background:rgba(148,163,184,.15);color:var(--muted)}
+.top-list .bar{flex:1;height:6px;border-radius:3px;background:var(--border);overflow:hidden}
+.top-list .bar .fill{height:100%;border-radius:3px;transition:.3s}
+/* Element Plus overrides */
+.el-input__inner,.el-textarea__inner,.el-select__wrapper{background:#0f172a!important;color:var(--text)!important;border-color:var(--border)!important}
+.el-form-item__label{color:var(--muted)!important}
+.el-table{--el-table-bg-color:var(--card);--el-table-tr-bg-color:var(--card);--el-table-header-bg-color:#162032;--el-table-row-hover-bg-color:#1a2744;--el-table-border-color:var(--border);--el-table-text-color:var(--text);--el-table-header-text-color:var(--muted)}
+.el-button--small{font-size:12px!important}
+.el-pagination{--el-pagination-bg-color:var(--card);--el-pagination-text-color:var(--muted);--el-pagination-button-bg-color:var(--card);--el-pagination-hover-color:var(--accent)}
+.empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
+.pulse{animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="top-bar">
+  <h1>
+    <span>🚨 报警管理仪表盘</span>
+    <span style="font-size:12px;color:var(--muted);font-weight:400">城市生命线AI感知云平台</span>
+  </h1>
+  <div class="meta">
+    <span><span class="conn-dot" :class="sseConnected?'on':'off'"></span> SSE {{ sseConnected ? '已连接' : '断开' }}</span>
+    <span>{{ new Date().toLocaleDateString() }}</span>
+    <el-button size="small" @click="refreshAll">刷新</el-button>
+  </div>
+</div>
+
+<div class="content">
+  <!-- Stats Cards -->
+  <div class="stats-row">
+    <div class="stat-card total">
+      <div class="label">总报警数</div>
+      <div class="value">{{ stats.total || 0 }}</div>
+      <div class="icon">📊</div>
+    </div>
+    <div class="stat-card active">
+      <div class="label">活跃报警</div>
+      <div class="value" style="color:var(--danger)">{{ statusCounts.ACTIVE || 0 }}</div>
+      <div class="icon">🔥</div>
+    </div>
+    <div class="stat-card critical">
+      <div class="label">严重报警</div>
+      <div class="value" style="color:var(--danger)">{{ severityCounts.CRITICAL || 0 }}</div>
+      <div class="icon">⚠️</div>
+    </div>
+    <div class="stat-card warning">
+      <div class="label">警告</div>
+      <div class="value" style="color:var(--warn)">{{ severityCounts.WARNING || 0 }}</div>
+      <div class="icon">⚡</div>
+    </div>
+    <div class="stat-card recovered">
+      <div class="label">已恢复</div>
+      <div class="value" style="color:var(--success)">{{ statusCounts.RECOVERED || 0 }}</div>
+      <div class="icon">✅</div>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts-row">
+    <div class="chart-card" style="flex:2">
+      <h3>📈 近 7 天报警趋势</h3>
+      <canvas id="trendChart" height="200"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>🏭 设备类型分布</h3>
+      <canvas id="deviceChart" height="200"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>🏆 报警设备 TOP 5</h3>
+      <ul class="top-list">
+        <li v-for="(d,i) in topDevices" :key="d.deviceCode">
+          <span class="rank" :class="i<3?'r'+(i+1):'rn'">{{ i+1 }}</span>
+          <span style="flex:1;font-weight:500">{{ d.deviceName || d.deviceCode }}</span>
+          <span class="tag" :class="'tag-'+d.deviceType">{{ d.deviceType }}</span>
+          <div class="bar"><div class="fill" :style="{width: barWidth(d.alarmCount)+'%',background:barColor(i)}"></div></div>
+          <span style="min-width:30px;text-align:right;font-weight:600;font-variant-numeric:tabular-nums">{{ d.alarmCount }}</span>
+        </li>
+        <li v-if="!topDevices.length" style="color:var(--muted);justify-content:center">暂无数据</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Alarm Table -->
+  <div class="table-card">
+    <div class="toolbar">
+      <h3 style="flex:1">📋 报警列表</h3>
+      <el-select v-model="filter.severity" placeholder="严重级别" clearable size="small" style="width:120px">
+        <el-option label="严重" value="CRITICAL"/>
+        <el-option label="警告" value="WARNING"/>
+        <el-option label="信息" value="INFO"/>
+      </el-select>
+      <el-select v-model="filter.status" placeholder="状态" clearable size="small" style="width:120px">
+        <el-option label="活跃" value="ACTIVE"/>
+        <el-option label="已确认" value="ACKNOWLEDGED"/>
+        <el-option label="处理中" value="PROCESSING"/>
+        <el-option label="已解决" value="RESOLVED"/>
+        <el-option label="已恢复" value="RECOVERED"/>
+        <el-option label="已忽略" value="IGNORED"/>
+      </el-select>
+      <el-button size="small" type="primary" @click="loadAlarms">查询</el-button>
+    </div>
+
+    <el-table :data="alarms" style="width:100%" stripe size="small" @row-click="showDetail">
+      <el-table-column label="严重级别" width="90">
+        <template #default="{row}">
+          <span class="tag" :class="'tag-'+row.severity">{{ sevLabel(row.severity) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="状态" width="90">
+        <template #default="{row}">
+          <span class="tag" :class="'tag-'+row.status">{{ statusLabel(row.status) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="设备" width="160">
+        <template #default="{row}">
+          <span>{{ row.deviceCode }}</span>
+          <span class="tag" :class="'tag-'+row.deviceType" style="margin-left:4px">{{ row.deviceType }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="指标" width="140">
+        <template #default="{row}">
+          {{ row.metricName || row.metricKey }}
+          {{ row.operator }} {{ row.thresholdValue }}
+        </template>
+      </el-table-column>
+      <el-table-column label="触发值" width="80">
+        <template #default="{row}">
+          <span :style="{color: isTriggered(row)?'var(--danger)':'var(--success)'}">{{ row.triggerValue }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="时间" width="160">
+        <template #default="{row}">
+          {{ formatTime(row.createdAt) }}
+        </template>
+      </el-table-column>
+      <el-table-column label="操作" width="200" fixed="right">
+        <template #default="{row}">
+          <el-button v-if="row.status==='ACTIVE'" size="small" type="warning" @click.stop="ackAlarm(row)">确认</el-button>
+          <el-button v-if="row.status==='ACKNOWLEDGED'" size="small" type="success" @click.stop="resolveAlarm(row)">解决</el-button>
+          <el-button v-if="row.status==='ACTIVE'||row.status==='ACKNOWLEDGED'" size="small" @click.stop="ignoreAlarm(row)">忽略</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <div style="display:flex;justify-content:center;margin-top:12px">
+      <el-pagination
+        v-model:current-page="page.current"
+        :page-size="page.size"
+        :total="page.total"
+        layout="total, prev, pager, next"
+        @current-change="loadAlarms"
+      />
+    </div>
+  </div>
+
+  <!-- Alarm Detail Dialog -->
+  <el-dialog v-model="detailVisible" title="报警详情" width="600px">
+    <div v-if="selectedAlarm" style="font-size:13px;line-height:2">
+      <div><b>报警编号：</b>{{ selectedAlarm.alarmNo }}</div>
+      <div><b>设备：</b>{{ selectedAlarm.deviceCode }} <span class="tag" :class="'tag-'+selectedAlarm.deviceType">{{ selectedAlarm.deviceType }}</span></div>
+      <div><b>严重级别：</b><span class="tag" :class="'tag-'+selectedAlarm.severity">{{ sevLabel(selectedAlarm.severity) }}</span></div>
+      <div><b>状态：</b><span class="tag" :class="'tag-'+selectedAlarm.status">{{ statusLabel(selectedAlarm.status) }}</span></div>
+      <div><b>指标：</b>{{ selectedAlarm.metricName }} {{ selectedAlarm.operator }} {{ selectedAlarm.thresholdValue }}</div>
+      <div><b>触发值：</b>{{ selectedAlarm.triggerValue }}</div>
+      <div><b>创建时间：</b>{{ formatTime(selectedAlarm.createdAt) }}</div>
+      <div v-if="selectedAlarm.resolvedAt"><b>恢复/解决时间：</b>{{ formatTime(selectedAlarm.resolvedAt) }}</div>
+    </div>
+    <template #footer>
+      <el-button v-if="selectedAlarm&&selectedAlarm.status==='ACTIVE'" type="warning" @click="ackAlarm(selectedAlarm);detailVisible=false">确认报警</el-button>
+      <el-button v-if="selectedAlarm&&selectedAlarm.status==='ACKNOWLEDGED'" type="success" @click="resolveAlarm(selectedAlarm);detailVisible=false">解决报警</el-button>
+      <el-button @click="detailVisible=false">关闭</el-button>
+    </template>
+  </el-dialog>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/vue@3.4.27/dist/vue.global.prod.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/element-plus@2.7.0/dist/index.full.min.js"></script>
+<script>
+const {createApp,ref,reactive,onMounted,onUnmounted,computed,watch,nextTick} = Vue
+
+const API = ''
+const deviceTypeNames = {LC:'液位计',LL:'流量计',YL:'雨量计',SZ:'水质一体机'}
+const deviceTypeColors = {LC:'#3b82f6',LL:'#22c55e',YL:'#f59e0b',SZ:'#a855f7'}
+
+createApp({
+  setup(){
+    const sseConnected = ref(false)
+    const stats = ref({})
+    const severityCounts = computed(()=>(stats.value.bySeverity||{}))
+    const statusCounts = computed(()=>(stats.value.byStatus||{}))
+    const trend = ref([])
+    const deviceDist = ref([])
+    const topDevices = ref([])
+    const alarms = ref([])
+    const detailVisible = ref(false)
+    const selectedAlarm = ref(null)
+    const filter = reactive({severity:null,status:null})
+    const page = reactive({current:1,size:15,total:0})
+    let sse = null
+
+    async function loadStats(){
+      try{const r=await fetch(API+'/api/v1/alarm-stats/summary');const d=await r.json();stats.value=d.data||{}}catch(e){console.warn('stats',e)}
+    }
+    async function loadTrend(){
+      try{const r=await fetch(API+'/api/v1/alarm-stats/trend?days=7');const d=await r.json();trend.value=d.data||[];await nextTick();drawTrend()}catch(e){console.warn('trend',e)}
+    }
+    async function loadDeviceDist(){
+      try{const r=await fetch(API+'/api/v1/alarm-stats/by-device-type');const d=await r.json();deviceDist.value=d.data||[];await nextTick();drawDeviceDist()}catch(e){console.warn('dist',e)}
+    }
+    async function loadTopDevices(){
+      try{const r=await fetch(API+'/api/v1/alarm-stats/top-devices?limit=5');const d=await r.json();topDevices.value=d.data||[]}catch(e){console.warn('top',e)}
+    }
+    async function loadAlarms(){
+      const params=new URLSearchParams()
+      if(filter.severity)params.set('severity',filter.severity)
+      if(filter.status)params.set('status',filter.status)
+      params.set('page',page.current-1)
+      params.set('size',page.size)
+      try{
+        const r=await fetch(API+'/api/v1/alarms?'+params)
+        const d=await r.json()
+        const p=d.data
+        alarms.value=p.content||[]
+        page.total=p.totalElements||0
+      }catch(e){console.warn('alarms',e)}
+    }
+
+    async function ackAlarm(row){
+      try{await fetch(API+'/api/v1/alarms/'+row.alarmNo+'/acknowledge',{method:'POST'});row.status='ACKNOWLEDGED';await loadStats()}catch(e){console.warn(e)}
+    }
+    async function resolveAlarm(row){
+      try{await fetch(API+'/api/v1/alarms/'+row.alarmNo+'/resolve',{method:'POST'});row.status='RESOLVED';await loadStats()}catch(e){console.warn(e)}
+    }
+    async function ignoreAlarm(row){
+      // Use acknowledge as ignore for now
+      try{await fetch(API+'/api/v1/alarms/'+row.alarmNo+'/acknowledge?acknowledgedBy=ignored',{method:'POST'});row.status='ACKNOWLEDGED';await loadStats()}catch(e){console.warn(e)}
+    }
+
+    function showDetail(row){selectedAlarm.value=row;detailVisible.value=true}
+    function sevLabel(s){return{CRITICAL:'严重',WARNING:'警告',INFO:'信息'}[s]||s}
+    function statusLabel(s){return{ACTIVE:'活跃',ACKNOWLEDGED:'已确认',PROCESSING:'处理中',RESOLVED:'已解决',RECOVERED:'已恢复',IGNORED:'已忽略'}[s]||s}
+    function formatTime(t){if(!t)return'';return new Date(t).toLocaleString('zh-CN')}
+    function isTriggered(row){return row.triggerValue!=null&&row.thresholdValue!=null&&(row.operator==='gte'||row.operator==='gt'?row.triggerValue>=row.thresholdValue:row.triggerValue<=row.thresholdValue)}
+    function barWidth(count){const max=topDevices.value[0]?.alarmCount||1;return Math.round(count/max*100)}
+    function barColor(i){return['var(--danger)','var(--warn)','var(--accent)','var(--info)','var(--muted)'][i]||'var(--muted)'}
+
+    function refreshAll(){loadStats();loadTrend();loadDeviceDist();loadTopDevices();loadAlarms()}
+
+    // Canvas Charts
+    function drawTrend(){
+      const canvas=document.getElementById('trendChart')
+      if(!canvas)return
+      const ctx=canvas.getContext('2d')
+      const dpr=window.devicePixelRatio||1
+      canvas.width=canvas.clientWidth*dpr
+      canvas.height=200*dpr
+      ctx.scale(dpr,dpr)
+      const w=canvas.clientWidth,h=200
+      ctx.clearRect(0,0,w,h)
+      if(!trend.value.length){ctx.fillStyle='#94a3b8';ctx.font='14px sans-serif';ctx.textAlign='center';ctx.fillText('暂无趋势数据',w/2,h/2);return}
+      const data=trend.value
+      const maxV=Math.max(...data.map(d=>d.count),1)
+      const pad={t:20,r:20,b:30,l:40}
+      const cw=w-pad.l-pad.r,ch=h-pad.t-pad.b
+      // Grid lines
+      ctx.strokeStyle='#334155';ctx.lineWidth=0.5
+      for(let i=0;i<=4;i++){const y=pad.t+ch*(1-i/4);ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(pad.l+cw,y);ctx.stroke();ctx.fillStyle='#94a3b8';ctx.font='11px sans-serif';ctx.textAlign='right';ctx.fillText(Math.round(maxV*i/4),pad.l-6,y+4)}
+      // Line + Area
+      ctx.beginPath()
+      data.forEach((d,i)=>{
+        const x=pad.l+cw*i/(data.length-1||1)
+        const y=pad.t+ch*(1-d.count/maxV)
+        if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)
+      })
+      ctx.strokeStyle='#3b82f6';ctx.lineWidth=2;ctx.stroke()
+      // Area fill
+      const lastX=pad.l+cw
+      const firstX=pad.l
+      ctx.lineTo(lastX,pad.t+ch);ctx.lineTo(firstX,pad.t+ch);ctx.closePath()
+      const grad=ctx.createLinearGradient(0,pad.t,0,pad.t+ch)
+      grad.addColorStop(0,'rgba(59,130,246,0.3)');grad.addColorStop(1,'rgba(59,130,246,0.02)')
+      ctx.fillStyle=grad;ctx.fill()
+      // Dots + labels
+      data.forEach((d,i)=>{
+        const x=pad.l+cw*i/(data.length-1||1)
+        const y=pad.t+ch*(1-d.count/maxV)
+        ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);ctx.fillStyle='#3b82f6';ctx.fill();ctx.strokeStyle='#1e293b';ctx.lineWidth=2;ctx.stroke()
+        ctx.fillStyle='#94a3b8';ctx.font='10px sans-serif';ctx.textAlign='center'
+        ctx.fillText(d.date.slice(5),x,h-8)
+      })
+    }
+
+    function drawDeviceDist(){
+      const canvas=document.getElementById('deviceChart')
+      if(!canvas)return
+      const ctx=canvas.getContext('2d')
+      const dpr=window.devicePixelRatio||1
+      canvas.width=canvas.clientWidth*dpr
+      canvas.height=200*dpr
+      ctx.scale(dpr,dpr)
+      const w=canvas.clientWidth,h=200
+      ctx.clearRect(0,0,w,h)
+      if(!deviceDist.value.length){ctx.fillStyle='#94a3b8';ctx.font='14px sans-serif';ctx.textAlign='center';ctx.fillText('暂无数据',w/2,h/2);return}
+      const data=deviceDist.value
+      const total=data.reduce((s,d)=>s+d.count,0)||1
+      const barW=36,gap=20
+      const startX=w/2-(data.length*(barW+gap)-gap)/2
+      data.forEach((d,i)=>{
+        const x=startX+i*(barW+gap)
+        const bh=Math.max(d.count/total*140,8)
+        const y=h-40-bh
+        const color=deviceTypeColors[d.deviceType]||'#3b82f6'
+        // Bar
+        const grad=ctx.createLinearGradient(x,y,x,h-40)
+        grad.addColorStop(0,color);grad.addColorStop(1,color+'33')
+        ctx.fillStyle=grad
+        ctx.beginPath();ctx.roundRect(x,y,barW,bh,4);ctx.fill()
+        // Label
+        ctx.fillStyle='#e2e8f0';ctx.font='12px sans-serif';ctx.textAlign='center'
+        ctx.fillText(d.count,x+barW/2,y-6)
+        ctx.fillStyle='#94a3b8';ctx.font='11px sans-serif'
+        ctx.fillText(deviceTypeNames[d.deviceType]||d.deviceType,x+barW/2,h-22)
+      })
+    }
+
+    // SSE
+    function connectSSE(){
+      try{
+        sse=new EventSource(API+'/webhook/events')
+        sse.onopen=()=>{sseConnected.value=true}
+        sse.onerror=()=>{sseConnected.value=false}
+        sse.onmessage=(e)=>{
+          try{
+            const evt=JSON.parse(e.data)
+            if(evt.type==='ALERT'){
+              loadStats();loadAlarms();loadTopDevices()
+            }
+          }catch(ex){}
+        }
+      }catch(e){sseConnected.value=false}
+    }
+
+    onMounted(()=>{refreshAll();connectSSE()})
+    onUnmounted(()=>{if(sse)sse.close()})
+
+    return{
+      sseConnected,stats,severityCounts,statusCounts,trend,deviceDist,topDevices,
+      alarms,detailVisible,selectedAlarm,filter,page,
+      refreshAll,loadAlarms,ackAlarm,resolveAlarm,ignoreAlarm,showDetail,
+      sevLabel,statusLabel,formatTime,isTriggered,barWidth,barColor
+    }
+  }
+}).use(ElementPlus).mount('#app')
+</script>
+</body>
+</html>
