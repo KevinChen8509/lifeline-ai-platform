@@ -17,7 +17,7 @@ from src.config import OUTPUT_DIR, AVATAR_SOURCE_IMAGE
 from src.parsers.ppt_parser import parse_ppt, slides_to_markdown
 from src.parsers.slide_renderer import render_slides
 from src.generators.script_generator import generate_script, parse_script_pages
-from src.tts.engine import synthesize_speech, POPULAR_VOICES
+from src.tts.engine import synthesize_speech, POPULAR_VOICES, EMOTION_PRESETS
 from src.avatar.sadtalker_driver import (
     check_sadtalker_installed,
     generate_video_sadtalker,
@@ -57,6 +57,8 @@ LANGUAGE_CHOICES = {
     "中文": "zh",
     "English": "en",
 }
+
+EMOTION_MAP = {f"{v['desc']} ({k})": k for k, v in EMOTION_PRESETS.items()}
 
 AVATAR_CHOICES = {
     "默认头像 (art_0)": "SadTalker/examples/source_image/art_0.png",
@@ -104,6 +106,7 @@ def generate(
     rate_name: str,
     custom_bgm,
     language_name: str,
+    emotion_name: str,
     progress=gr.Progress(),
 ):
     """核心处理函数 — 生成器，流式更新 UI"""
@@ -122,6 +125,9 @@ def generate(
     use_fallback = mode == "fallback" or "静态" in mode or "快速" in mode
     layout = LAYOUT_CHOICES.get(layout_name, "pip")
     rate = RATE_CHOICES.get(rate_name, "+0%")
+    emotion = EMOTION_MAP.get(emotion_name, "default")
+    preset = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS["default"])
+    effective_rate = rate if rate != "+0%" else preset["rate"]
 
     # 头像
     if avatar_choice == "自定义上传" and avatar_upload is not None:
@@ -191,62 +197,63 @@ def generate(
     export_paths.append(str(script_file))
     yield (script_display, None, None, status(f"演讲稿完成: {len(script_pages)} 段"), None)
 
-    # === Step 3: TTS ===
-    progress(0.3, desc="语音合成...")
+    # === Step 3+4: TTS + 视频 逐页流水线 ===
+    progress(0.3, desc="逐页合成音频+视频...")
     audio_dir = output_dir / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
-
-    audio_paths = []
-    for pn in sorted(script_pages.keys()):
-        text = script_pages[pn]
-        out = audio_dir / f"page_{pn:03d}.mp3"
-        result = synthesize_speech(text, out, voice=voice, rate=rate)
-        audio_paths.append(result.audio_path)
-
-    # 合并音频
-    merged_audio = str(output_dir / "merged_audio.mp3")
-    _merge_audios(audio_paths, merged_audio)
-    export_paths.extend(audio_paths)
-    yield (script_display, merged_audio, None, status("语音合成完成"), None)
-
-    # === Step 4: 视频 ===
     video_dir = output_dir / "video"
     video_dir.mkdir(parents=True, exist_ok=True)
 
-    if use_fallback:
-        progress(0.5, desc="生成视频 (静态图片模式)...")
-        videos = {}
-        for pn in sorted(script_pages.keys()):
-            n = len(script_pages)
-            progress(0.5 + 0.4 * (pn + 1) / n,
-                     desc=f"生成第 {pn + 1} 页视频...")
-            audio_p = audio_dir / f"page_{pn:03d}.mp3"
-            out = video_dir / f"page_{pn:03d}.mp4"
+    audio_paths = []
+    videos = {}
+    page_nums = sorted(script_pages.keys())
+    total_pages = len(page_nums)
+
+    for pn in page_nums:
+        text = script_pages[pn]
+        page_idx = page_nums.index(pn)
+        page_pct = 0.3 + 0.55 * page_idx / total_pages
+
+        # TTS
+        progress(page_pct, desc=f"第 {pn + 1}/{total_pages} 页: 合成语音...")
+        audio_out = audio_dir / f"page_{pn:03d}.mp3"
+        result = synthesize_speech(text, audio_out, voice=voice, rate=effective_rate,
+                                   pitch=preset["pitch"], volume=preset["volume"])
+        audio_paths.append(result.audio_path)
+
+        # 视频
+        progress(page_pct + 0.25 / total_pages, desc=f"第 {pn + 1}/{total_pages} 页: 生成视频...")
+        video_out = video_dir / f"page_{pn:03d}.mp4"
+        if use_fallback:
             videos[pn] = generate_fallback_video(
-                audio_path=str(audio_p),
+                audio_path=str(audio_out),
                 source_image=avatar_path,
-                output_path=out,
+                output_path=video_out,
             )
-    elif check_sadtalker_installed():
-        cpu = should_use_cpu()
-        progress(0.5, desc=f"生成视频 (SadTalker {'CPU' if cpu else 'GPU'})...")
-        videos = {}
-        for pn in sorted(script_pages.keys()):
-            n = len(script_pages)
-            progress(0.5 + 0.4 * (pn + 1) / n,
-                     desc=f"SadTalker 第 {pn + 1} 页...")
-            audio_p = audio_dir / f"page_{pn:03d}.mp3"
-            out = video_dir / f"page_{pn:03d}.mp4"
+        elif check_sadtalker_installed():
+            cpu = should_use_cpu()
             videos[pn] = generate_video_sadtalker(
-                audio_path=str(audio_p),
-                output_path=out,
+                audio_path=str(audio_out),
+                output_path=video_out,
                 source_image=avatar_path,
                 use_cpu=cpu,
             )
-    else:
-        yield (script_display, merged_audio, None,
-               "SadTalker 未安装，请选择快速模式", None)
-        return
+        else:
+            yield (script_display, None, None,
+                   "SadTalker 未安装，请选择快速模式", None)
+            return
+
+        # 流式: 每完成一页就展示当前页视频
+        if videos[pn]:
+            yield (script_display, audio_paths[-1], str(videos[pn]),
+                   status(f"第 {pn + 1}/{total_pages} 页完成"), None)
+
+    # 合并所有音频
+    merged_audio = str(output_dir / "merged_audio.mp3")
+    _merge_audios(audio_paths, merged_audio)
+    export_paths.extend(audio_paths)
+    yield (script_display, merged_audio, str(videos[page_nums[-1]]),
+           status(f"音频+视频完成: {total_pages} 页"), None)
 
     # === Step 4.5: 画中画合成 ===
     if layout == "pip" and slide_images:
@@ -335,6 +342,7 @@ def generate_preview(
     avatar_upload,
     rate_name: str,
     language_name: str,
+    emotion_name: str,
     progress=gr.Progress(),
 ):
     """快速预览 — 每页只取前 50 字，静态图片模式，跳过 PIP/字幕/BGM"""
@@ -416,6 +424,7 @@ def generate_preview(
     merged_audio = str(output_dir / "merged_audio.mp3")
     _merge_audios(audio_paths, merged_audio)
     yield (script_display, merged_audio, None, status("语音合成完成"), None)
+    yield (script_display, merged_audio, None, status("语音合成完成"), None)
 
     # Step 4: 静态图片视频
     progress(0.6, desc="生成预览视频...")
@@ -473,6 +482,8 @@ def generate_batch(
     enable_bgm: bool,
     rate_name: str,
     custom_bgm,
+    language_name: str,
+    emotion_name: str,
     progress=gr.Progress(),
 ):
     """批量处理多个 PPT 文件"""
@@ -486,6 +497,8 @@ def generate_batch(
     style = STYLE_CHOICES.get(style_name, "formal")
     voice = VOICE_MAP.get(voice_name, "zh-CN-YunxiNeural")
     rate = RATE_CHOICES.get(rate_name, "+0%")
+    emotion = EMOTION_MAP.get(emotion_name, "default")
+    preset = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS["default"])
     use_fallback = mode == "fallback" or "静态" in mode or "快速" in mode
     layout = LAYOUT_CHOICES.get(layout_name, "pip")
 
@@ -526,7 +539,8 @@ def generate_batch(
             audio_paths = []
             for pn in sorted(script_pages.keys()):
                 out = audio_dir / f"page_{pn:03d}.mp3"
-                result = synthesize_speech(script_pages[pn], out, voice=voice, rate=rate)
+                result = synthesize_speech(script_pages[pn], out, voice=voice, rate=rate,
+                                            pitch=preset["pitch"], volume=preset["volume"])
                 audio_paths.append(result.audio_path)
 
             merged_audio = str(output_dir / "merged_audio.mp3")
@@ -608,6 +622,12 @@ def build_ui():
                     choices=list(LANGUAGE_CHOICES.keys()),
                     value="自动检测",
                     label="演讲语言",
+                )
+
+                emotion_dd = gr.Dropdown(
+                    choices=list(EMOTION_MAP.keys()),
+                    value="默认（中性） (default)",
+                    label="语音情感",
                 )
 
                 voice_dd = gr.Dropdown(
@@ -718,20 +738,20 @@ def build_ui():
             fn=generate,
             inputs=[ppt_input, style_dd, voice_dd,
                     avatar_radio, avatar_file, mode_radio, layout_dd,
-                    subtitle_cb, bgm_cb, rate_dd, bgm_file, language_dd],
+                    subtitle_cb, bgm_cb, rate_dd, bgm_file, language_dd, emotion_dd],
             outputs=[script_out, audio_out, video_out, status_box, export_files],
         )
         preview_btn.click(
             fn=generate_preview,
             inputs=[ppt_input, style_dd, voice_dd,
-                    avatar_radio, avatar_file, rate_dd, language_dd],
+                    avatar_radio, avatar_file, rate_dd, language_dd, emotion_dd],
             outputs=[script_out, audio_out, video_out, status_box, export_files],
         )
         batch_btn.click(
             fn=generate_batch,
             inputs=[ppt_input, style_dd, voice_dd,
                     avatar_radio, avatar_file, mode_radio, layout_dd,
-                    subtitle_cb, bgm_cb, rate_dd, bgm_file, language_dd],
+                    subtitle_cb, bgm_cb, rate_dd, bgm_file, language_dd, emotion_dd],
             outputs=[script_out, audio_out, video_out, status_box, export_files],
         )
 

@@ -43,6 +43,9 @@ def main():
     parser.add_argument("--language", default="auto",
                         choices=["auto", "zh", "en"],
                         help="演讲语言 (auto=自动检测, zh=中文, en=英文)")
+    parser.add_argument("--emotion", default="default",
+                        choices=["default", "cheerful", "serious", "gentle", "energetic", "calm"],
+                        help="语音情感风格")
     parser.add_argument("--batch", default=None,
                         help="批量处理: 指定目录，处理其中所有 .pptx 文件")
     args = parser.parse_args()
@@ -75,6 +78,7 @@ def main():
                 bgm_path=args.bgm_file,
                 rate=args.rate,
                 language=args.language,
+                emotion=args.emotion,
             )
         return
 

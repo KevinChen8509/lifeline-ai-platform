@@ -22,12 +22,14 @@ async def _synthesize(
     output_path: str | Path,
     voice: str = TTS_VOICE,
     rate: str = TTS_RATE,
+    pitch: str = "+0Hz",
+    volume: str = "+0%",
 ) -> TTSResult:
     """使用 Edge TTS 合成语音"""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    communicate = edge_tts.Communicate(text, voice, rate=rate)
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, volume=volume)
     await communicate.save(str(output_path))
 
     # 估算时长（Edge TTS 中文约 4-5 字/秒）
@@ -47,6 +49,8 @@ def synthesize_speech(
     output_path: str | Path | None = None,
     voice: str | None = None,
     rate: str | None = None,
+    pitch: str = "+0Hz",
+    volume: str = "+0%",
 ) -> TTSResult:
     """
     文本转语音
@@ -55,6 +59,9 @@ def synthesize_speech(
         text: 要合成的文本
         output_path: 输出音频路径，None 则自动生成
         voice: 语音角色，None 使用默认
+        rate: 语速 (如 "+20%", "-10%")
+        pitch: 音调 (如 "+5Hz", "-5Hz")
+        volume: 音量 (如 "+10%", "-10%")
     """
     # 清理不适合朗读的标记和特殊字符
     import re
@@ -81,7 +88,7 @@ def synthesize_speech(
 
     return asyncio.run(
         _synthesize(clean_text, output_path, voice=voice or TTS_VOICE,
-                    rate=rate or TTS_RATE)
+                    rate=rate or TTS_RATE, pitch=pitch, volume=volume)
     )
 
 
@@ -89,6 +96,8 @@ def synthesize_pages(
     pages: dict[int, str],
     output_dir: str | Path | None = None,
     rate: str | None = None,
+    pitch: str = "+0Hz",
+    volume: str = "+0%",
 ) -> dict[int, TTSResult]:
     """
     按页合成语音，返回 {页码: TTSResult}
@@ -102,9 +111,21 @@ def synthesize_pages(
     for page_num, text in pages.items():
         out_path = output_dir / f"page_{page_num:03d}.mp3"
         print(f"  合成第 {page_num} 页语音 -> {out_path.name}")
-        results[page_num] = synthesize_speech(text, out_path, rate=rate)
+        results[page_num] = synthesize_speech(text, out_path, rate=rate, pitch=pitch, volume=volume)
 
     return results
+
+
+# ============ 情感预设 ============
+# 通过 rate/pitch/volume 组合模拟不同情感
+EMOTION_PRESETS = {
+    "default": {"rate": "+0%", "pitch": "+0Hz", "volume": "+0%", "desc": "默认（中性）"},
+    "cheerful": {"rate": "+10%", "pitch": "+3Hz", "volume": "+5%", "desc": "开朗活泼"},
+    "serious": {"rate": "-5%", "pitch": "-2Hz", "volume": "+0%", "desc": "严肃沉稳"},
+    "gentle": {"rate": "-10%", "pitch": "+1Hz", "volume": "-5%", "desc": "温柔舒缓"},
+    "energetic": {"rate": "+20%", "pitch": "+5Hz", "volume": "+10%", "desc": "充满活力"},
+    "calm": {"rate": "-15%", "pitch": "-1Hz", "volume": "-5%", "desc": "平静从容"},
+}
 
 
 # ============ 可选语音列表 ============

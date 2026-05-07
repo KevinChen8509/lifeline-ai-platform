@@ -9,7 +9,7 @@ from src.parsers.ppt_parser import parse_ppt, slides_to_markdown, slides_to_json
 from src.parsers.slide_renderer import render_slides
 from src.detectors.language import detect_language, get_default_voice
 from src.generators.script_generator import generate_script, parse_script_pages
-from src.tts.engine import synthesize_pages, synthesize_speech
+from src.tts.engine import synthesize_pages, synthesize_speech, EMOTION_PRESETS
 from src.avatar.sadtalker_driver import (
     generate_videos_for_pages,
     check_sadtalker_installed,
@@ -49,6 +49,7 @@ class DigitalHumanPipeline:
         bgm_path: str | Path | None = None,
         rate: str = "+0%",
         language: str = "auto",
+        emotion: str = "default",
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> Path:
         """
@@ -122,7 +123,15 @@ class DigitalHumanPipeline:
         # Step 3: TTS 语音合成
         _progress("[4/5] 合成语音...", 0.4)
         audio_dir = self.output_dir / "audio"
-        self.audio_results = synthesize_pages(self.script_pages, audio_dir, rate=rate)
+        # 应用情感预设
+        preset = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS["default"])
+        effective_rate = rate if rate != "+0%" else preset["rate"]
+        _progress(f"  情感: {preset['desc']}", 0.42)
+
+        self.audio_results = synthesize_pages(
+            self.script_pages, audio_dir,
+            rate=effective_rate, pitch=preset["pitch"], volume=preset["volume"],
+        )
 
         total_duration = sum(r.duration_seconds for r in self.audio_results.values())
         _progress(f"  语音合成完成: 总时长约 {total_duration:.0f} 秒", 0.5)
@@ -236,6 +245,9 @@ def main():
     parser.add_argument("--language", default="auto",
                         choices=["auto", "zh", "en"],
                         help="演讲语言 (auto=自动检测, zh=中文, en=英文)")
+    parser.add_argument("--emotion", default="default",
+                        choices=list(EMOTION_PRESETS.keys()),
+                        help="语音情感风格")
 
     args = parser.parse_args()
 
@@ -254,6 +266,7 @@ def main():
         bgm_path=args.bgm_file,
         rate=args.rate,
         language=args.language,
+        emotion=args.emotion,
     )
 
 
