@@ -5,7 +5,9 @@
 文档: http://localhost:8000/docs
 """
 
+import os
 import sys
+import time
 import uuid
 import threading
 from pathlib import Path
@@ -14,8 +16,9 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent))
 
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Query
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
 from src.config import OUTPUT_DIR
@@ -30,9 +33,27 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# ============ API Key 认证 ============
+_api_keys_str = os.getenv("API_KEYS", "")
+_valid_keys = set(k.strip() for k in _api_keys_str.split(",") if k.strip()) if _api_keys_str else set()
+_auth_enabled = bool(_valid_keys)
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_api_key(api_key: str = Depends(api_key_header)):
+    """验证 API Key（未配置则跳过）"""
+    if not _auth_enabled:
+        return True
+    if api_key not in _valid_keys:
+        raise HTTPException(401, "无效的 API Key")
+    return True
+
+
 # 任务存储
 _jobs: dict[str, dict] = {}
 _job_lock = threading.Lock()
+_start_time = time.time()
 
 
 # ============ 数据模型 ============
@@ -87,8 +108,24 @@ def root():
     return {"name": "数字人汇报系统 API", "version": "1.0.0", "docs": "/docs"}
 
 
+@app.get("/health")
+def health_check():
+    """健康检查"""
+    import subprocess
+    ffmpeg_ok = subprocess.run(["ffmpeg", "-version"], capture_output=True).returncode == 0
+    with _job_lock:
+        running = sum(1 for j in _jobs.values() if j["status"] == "running")
+    return {
+        "status": "ok",
+        "uptime_seconds": round(time.time() - _start_time),
+        "ffmpeg": "ok" if ffmpeg_ok else "missing",
+        "auth_enabled": _auth_enabled,
+        "jobs_running": running,
+    }
+
+
 @app.get("/options")
-def get_options():
+def get_options(_: bool = Depends(verify_api_key)):
     """获取所有可选项"""
     return {
         "styles": ["formal", "casual", "training"],
@@ -116,6 +153,7 @@ async def generate(
     use_fallback: bool = Form(True),
     parallel: bool = Form(False),
     watermark_text: Optional[str] = Form(None),
+    auth: bool = Depends(verify_api_key),
 ):
     """提交生成任务（异步）"""
     # 保存上传的 PPT
@@ -162,7 +200,7 @@ async def generate(
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatus)
-def get_job_status(job_id: str):
+def get_job_status(job_id: str, _: bool = Depends(verify_api_key)):
     """查询任务状态"""
     with _job_lock:
         if job_id not in _jobs:
@@ -171,14 +209,14 @@ def get_job_status(job_id: str):
 
 
 @app.get("/jobs", response_model=TaskListResponse)
-def list_jobs():
+def list_jobs(_: bool = Depends(verify_api_key)):
     """列出所有任务"""
     with _job_lock:
         return TaskListResponse(jobs=[JobStatus(**j) for j in _jobs.values()])
 
 
 @app.get("/download/{job_id}")
-def download_result(job_id: str):
+def download_result(job_id: str, _: bool = Depends(verify_api_key)):
     """下载生成结果"""
     with _job_lock:
         if job_id not in _jobs:
@@ -200,7 +238,7 @@ def download_result(job_id: str):
 
 
 @app.delete("/jobs/{job_id}")
-def delete_job(job_id: str):
+def delete_job(job_id: str, _: bool = Depends(verify_api_key)):
     """删除任务记录"""
     with _job_lock:
         if job_id not in _jobs:

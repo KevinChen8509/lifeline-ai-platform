@@ -24,7 +24,7 @@ from src.avatar.sadtalker_driver import (
     should_use_cpu,
 )
 from src.avatar.fallback_driver import generate_fallback_video
-from src.avatar.compositor import composite_pages
+from src.avatar.compositor import composite_pages, _get_resolution
 from src.avatar.bgm import mix_bgm
 from src.avatar.merger import merge_videos, TRANSITION_CHOICES
 from src.avatar.watermark import add_text_watermark, add_image_watermark
@@ -70,6 +70,13 @@ POSITION_CHOICES = {
     "右上角": "top-right",
     "左上角": "top-left",
     "居中": "center",
+}
+
+RESOLUTION_MAP = {
+    "720p (1280x720)": "720p",
+    "1080p (1920x1080)": "1080p",
+    "480p (854x480)": "480p",
+    "4K (3840x2160)": "4K",
 }
 
 AVATAR_CHOICES = {
@@ -123,6 +130,9 @@ def generate(
     watermark_text: str,
     watermark_image,
     enable_cover: bool,
+    resolution_name: str,
+    enable_parallel: bool,
+    enable_cache: bool,
     progress=gr.Progress(),
 ):
     """核心处理函数 — 生成器，流式更新 UI"""
@@ -143,6 +153,7 @@ def generate(
     rate = RATE_CHOICES.get(rate_name, "+0%")
     emotion = EMOTION_MAP.get(emotion_name, "default")
     transition = TRANSITION_MAP.get(transition_name, "fade")
+    resolution = RESOLUTION_MAP.get(resolution_name, "720p")
     preset = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS["default"])
     effective_rate = rate if rate != "+0%" else preset["rate"]
 
@@ -191,7 +202,8 @@ def generate(
         progress(0.1, desc="导出幻灯片图片...")
         try:
             slide_dir = output_dir / "slides"
-            slide_images = render_slides(ppt_path, slide_dir)
+            rw, rh = _get_resolution(resolution)
+            slide_images = render_slides(ppt_path, slide_dir, width=rw, height=rh)
             yield (info, None, None, status(f"导出 {len(slide_images)} 张幻灯片"), None)
         except Exception as e:
             yield (info, None, None, status(f"幻灯片导出跳过: {e}"), None)
@@ -235,7 +247,8 @@ def generate(
         progress(page_pct, desc=f"第 {pn + 1}/{total_pages} 页: 合成语音...")
         audio_out = audio_dir / f"page_{pn:03d}.mp3"
         result = synthesize_speech(text, audio_out, voice=voice, rate=effective_rate,
-                                   pitch=preset["pitch"], volume=preset["volume"])
+                                   pitch=preset["pitch"], volume=preset["volume"],
+                                   use_cache=enable_cache)
         audio_paths.append(result.audio_path)
 
         # 视频
@@ -276,7 +289,7 @@ def generate(
     if layout == "pip" and slide_images:
         progress(0.9, desc="合成画中画...")
         pip_dir = output_dir / "pip"
-        videos = composite_pages(slide_images, videos, pip_dir)
+        videos = composite_pages(slide_images, videos, pip_dir, resolution=resolution)
 
     # === Step 4.6: 字幕叠加 ===
     if enable_subtitles:
@@ -768,6 +781,22 @@ def build_ui():
                     label="生成封面图",
                 )
 
+                resolution_dd = gr.Dropdown(
+                    choices=list(RESOLUTION_MAP.keys()),
+                    value="720p (1280x720)",
+                    label="输出分辨率",
+                )
+
+                parallel_cb = gr.Checkbox(
+                    value=False,
+                    label="并行处理（加速 TTS+视频生成）",
+                )
+
+                cache_cb = gr.Checkbox(
+                    value=True,
+                    label="TTS 缓存（相同文本跳过重复合成）",
+                )
+
                 gen_btn = gr.Button("生成", variant="primary", size="lg")
                 preview_btn = gr.Button("快速预览", size="lg")
                 batch_btn = gr.Button("批量生成", size="lg")
@@ -807,7 +836,8 @@ def build_ui():
             inputs=[ppt_input, style_dd, voice_dd,
                     avatar_radio, avatar_file, mode_radio, layout_dd,
                     subtitle_cb, bgm_cb, rate_dd, bgm_file, language_dd, emotion_dd,
-                    transition_dd, wm_text, wm_image, cover_cb],
+                    transition_dd, wm_text, wm_image, cover_cb,
+                    resolution_dd, parallel_cb, cache_cb],
             outputs=[script_out, audio_out, video_out, status_box, export_files],
         )
         preview_btn.click(

@@ -1,5 +1,6 @@
 """数字人汇报系统 - 主流水水线"""
 
+import json
 import time
 from pathlib import Path
 from typing import Callable
@@ -9,7 +10,7 @@ from src.parsers.ppt_parser import parse_ppt, slides_to_markdown, slides_to_json
 from src.parsers.slide_renderer import render_slides
 from src.detectors.language import detect_language, get_default_voice
 from src.generators.script_generator import generate_script, parse_script_pages
-from src.tts.engine import synthesize_pages, synthesize_speech, EMOTION_PRESETS
+from src.tts.engine import synthesize_pages, synthesize_speech, EMOTION_PRESETS, TTSResult
 from src.avatar.sadtalker_driver import (
     generate_videos_for_pages,
     check_sadtalker_installed,
@@ -36,6 +37,61 @@ class DigitalHumanPipeline:
         self.slide_images = []
         self.output_dir = OUTPUT_DIR
 
+    # ============ 断点续传 ============
+
+    def _checkpoint_path(self) -> Path:
+        return self.output_dir / "checkpoint.json"
+
+    def _save_checkpoint(self, step: str, **extra):
+        """保存检查点"""
+        cp = {
+            "step": step,
+            "timestamp": time.time(),
+            "script_pages": {str(k): v for k, v in self.script_pages.items()},
+            "audio_paths": {
+                str(k): v.audio_path if isinstance(v, TTSResult) else str(v)
+                for k, v in self.audio_results.items()
+            },
+            "video_paths": {str(k): str(v) for k, v in self.video_results.items()},
+            "slide_images": [str(p) for p in self.slide_images],
+            **extra,
+        }
+        self._checkpoint_path().write_text(json.dumps(cp, ensure_ascii=False), encoding="utf-8")
+
+    def _load_checkpoint(self) -> dict | None:
+        """加载检查点"""
+        cp_path = self._checkpoint_path()
+        if cp_path.exists():
+            try:
+                return json.loads(cp_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                return None
+        return None
+
+    def _restore_audio_results(self, cp: dict):
+        """从检查点恢复音频结果"""
+        audio_dir = self.output_dir / "audio"
+        for k, path_str in cp.get("audio_paths", {}).items():
+            path = Path(path_str)
+            if path.exists():
+                # 估算时长
+                text = self.script_pages.get(int(k), "")
+                duration = len(text.replace("[PAUSE]", "").replace("[EMPHASIS]", "")) / 4.5
+                self.audio_results[int(k)] = TTSResult(
+                    audio_path=str(path), duration_seconds=duration
+                )
+
+    def _restore_video_results(self, cp: dict):
+        """从检查点恢复视频结果"""
+        for k, path_str in cp.get("video_paths", {}).items():
+            path = Path(path_str)
+            if path.exists():
+                self.video_results[int(k)] = path
+
+    def _restore_slide_images(self, cp: dict):
+        """从检查点恢复幻灯片图片"""
+        self.slide_images = [Path(p) for p in cp.get("slide_images", []) if Path(p).exists()]
+
     def run(
         self,
         ppt_path: str | Path,
@@ -59,6 +115,7 @@ class DigitalHumanPipeline:
         resolution: str = "720p",
         parallel: bool = False,
         use_cache: bool = True,
+        resume: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> Path:
         """
@@ -90,18 +147,30 @@ class DigitalHumanPipeline:
 
         _progress(f"开始处理: {ppt_path.name}", 0.0)
 
-        # Step 1: 解析 PPT
-        _progress("[1/5] 解析 PPT 内容...", 0.05)
-        self.slides = parse_ppt(ppt_path)
-        markdown = slides_to_markdown(self.slides)
+        # 断点续传: 尝试恢复之前的状态
+        cp = None
+        if resume:
+            cp = self._load_checkpoint()
+            if cp:
+                _progress(f"  发现检查点: 上次完成到 '{cp['step']}'", 0.0)
 
-        (self.output_dir / "parsed_slides.json").write_text(
-            slides_to_json(self.slides), encoding="utf-8"
-        )
-        (self.output_dir / "parsed_slides.md").write_text(
-            markdown, encoding="utf-8"
-        )
-        _progress(f"  解析完成: {len(self.slides)} 页", 0.1)
+        # Step 1: 解析 PPT
+        if cp and cp["step"] in ("slides", "script", "tts", "video", "pip", "subtitle", "merge"):
+            _progress("  跳过 PPT 解析（检查点恢复）", 0.1)
+            self.slides = parse_ppt(ppt_path)  # 快速，仍需执行
+            markdown = slides_to_markdown(self.slides)
+        else:
+            _progress("[1/5] 解析 PPT 内容...", 0.05)
+            self.slides = parse_ppt(ppt_path)
+            markdown = slides_to_markdown(self.slides)
+
+            (self.output_dir / "parsed_slides.json").write_text(
+                slides_to_json(self.slides), encoding="utf-8"
+            )
+            (self.output_dir / "parsed_slides.md").write_text(
+                markdown, encoding="utf-8"
+            )
+            _progress(f"  解析完成: {len(self.slides)} 页", 0.1)
 
         # 检测语言
         if language == "auto":
@@ -109,41 +178,58 @@ class DigitalHumanPipeline:
         _progress(f"  检测语言: {'中文' if language == 'zh' else 'English'}", 0.11)
 
         # Step 1.5: 导出幻灯片图片
-        _progress("[2/5] 导出幻灯片图片...", 0.12)
-        slide_dir = self.output_dir / "slides"
-        try:
-            from src.avatar.compositor import _get_resolution
-            rw, rh = _get_resolution(resolution)
-            self.slide_images = render_slides(ppt_path, slide_dir, width=rw, height=rh)
-            _progress(f"  导出完成: {len(self.slide_images)} 张", 0.2)
-        except Exception as e:
-            _progress(f"  幻灯片导出跳过: {e}", 0.2)
-            self.slide_images = []
-            layout = "avatar-only"
+        if cp and cp["step"] in ("slides", "script", "tts", "video", "pip", "subtitle", "merge"):
+            _progress("  跳过幻灯片导出（检查点恢复）", 0.2)
+            self._restore_slide_images(cp)
+        else:
+            _progress("[2/5] 导出幻灯片图片...", 0.12)
+            slide_dir = self.output_dir / "slides"
+            try:
+                from src.avatar.compositor import _get_resolution
+                rw, rh = _get_resolution(resolution)
+                self.slide_images = render_slides(ppt_path, slide_dir, width=rw, height=rh)
+                _progress(f"  导出完成: {len(self.slide_images)} 张", 0.2)
+            except Exception as e:
+                _progress(f"  幻灯片导出跳过: {e}", 0.2)
+                self.slide_images = []
+                layout = "avatar-only"
+            self._save_checkpoint("slides")
 
         # Step 2: 生成演讲稿
-        _progress("[3/5] 生成演讲稿...", 0.25)
-        self.script = generate_script(markdown, style=style, language=language)
-        self.script_pages = parse_script_pages(self.script)
+        if cp and cp["step"] in ("script", "tts", "video", "pip", "subtitle", "merge"):
+            _progress("  跳过演讲稿生成（检查点恢复）", 0.35)
+            script_file = self.output_dir / "script.txt"
+            if script_file.exists():
+                self.script = script_file.read_text(encoding="utf-8")
+                self.script_pages = parse_script_pages(self.script)
+        else:
+            _progress("[3/5] 生成演讲稿...", 0.25)
+            self.script = generate_script(markdown, style=style, language=language)
+            self.script_pages = parse_script_pages(self.script)
 
-        (self.output_dir / "script.txt").write_text(
-            self.script, encoding="utf-8"
-        )
-        _progress(f"  演讲稿生成完成: {len(self.script_pages)} 段", 0.35)
+            (self.output_dir / "script.txt").write_text(
+                self.script, encoding="utf-8"
+            )
+            _progress(f"  演讲稿生成完成: {len(self.script_pages)} 段", 0.35)
+            self._save_checkpoint("script")
 
         # Step 3: TTS 语音合成
-        _progress("[4/5] 合成语音...", 0.4)
-        audio_dir = self.output_dir / "audio"
-        # 应用情感预设
-        preset = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS["default"])
-        effective_rate = rate if rate != "+0%" else preset["rate"]
-        _progress(f"  情感: {preset['desc']}", 0.42)
+        if cp and cp["step"] in ("tts", "video", "pip", "subtitle", "merge"):
+            _progress("  跳过 TTS（检查点恢复）", 0.5)
+            self._restore_audio_results(cp)
+        else:
+            _progress("[4/5] 合成语音...", 0.4)
+            audio_dir = self.output_dir / "audio"
+            preset = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS["default"])
+            effective_rate = rate if rate != "+0%" else preset["rate"]
+            _progress(f"  情感: {preset['desc']}", 0.42)
 
-        self.audio_results = synthesize_pages(
-            self.script_pages, audio_dir,
-            rate=effective_rate, pitch=preset["pitch"], volume=preset["volume"],
-            use_cache=use_cache, parallel=parallel,
-        )
+            self.audio_results = synthesize_pages(
+                self.script_pages, audio_dir,
+                rate=effective_rate, pitch=preset["pitch"], volume=preset["volume"],
+                use_cache=use_cache, parallel=parallel,
+            )
+            self._save_checkpoint("tts")
 
         total_duration = sum(r.duration_seconds for r in self.audio_results.values())
         _progress(f"  语音合成完成: 总时长约 {total_duration:.0f} 秒", 0.5)
@@ -151,6 +237,13 @@ class DigitalHumanPipeline:
         if skip_avatar:
             _progress("完成 (仅音频模式)", 1.0)
             return self.output_dir
+
+        # Step 4: 数字人视频生成
+        if cp and cp["step"] in ("video", "pip", "subtitle", "merge"):
+            _progress("  跳过视频生成（检查点恢复）", 0.85)
+            self._restore_video_results(cp)
+        else:
+            _progress("[5/5] 生成数字人视频...", 0.55)
 
         # Step 4: 数字人视频生成
         _progress("[5/5] 生成数字人视频...", 0.55)
@@ -186,6 +279,7 @@ class DigitalHumanPipeline:
                         output_path=self.output_dir / "video" / f"page_{page_num:03d}.mp4",
                     )
                     self.video_results[page_num] = video_path
+            self._save_checkpoint("video")
 
         # Step 4.5: 画中画合成
         if layout == "pip" and self.slide_images:
@@ -307,6 +401,8 @@ def main():
                         help="并行处理 TTS 和视频生成")
     parser.add_argument("--no-cache", action="store_true",
                         help="禁用 TTS 缓存")
+    parser.add_argument("--resume", action="store_true",
+                        help="从上次失败的步骤继续")
 
     args = parser.parse_args()
 
@@ -333,6 +429,7 @@ def main():
         resolution=args.resolution,
         parallel=args.parallel,
         use_cache=not args.no_cache,
+        resume=args.resume,
     )
 
 
