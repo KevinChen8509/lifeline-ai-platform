@@ -11,6 +11,10 @@ edge-tts>=6.1.0               # 免费中文 TTS
 # ---- Web UI ----
 gradio>=5.0.0                 # Web 界面
 
+# ---- REST API ----
+fastapi>=0.100.0              # HTTP API 框架
+uvicorn>=0.20.0               # ASGI 服务器
+
 # ---- 数字人驱动（可选）----
 # SadTalker 需要单独安装，详见 README
 # facexlib>=0.3.0

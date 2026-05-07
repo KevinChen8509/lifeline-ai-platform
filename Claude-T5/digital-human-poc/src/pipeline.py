@@ -15,8 +15,8 @@ from src.avatar.sadtalker_driver import (
     check_sadtalker_installed,
     should_use_cpu,
 )
-from src.avatar.fallback_driver import generate_fallback_video
-from src.avatar.compositor import composite_pages
+from src.avatar.fallback_driver import generate_fallback_video, generate_fallback_pages_parallel
+from src.avatar.compositor import composite_pages, RESOLUTION_PRESETS
 from src.avatar.subtitle import add_subtitles_to_pages
 from src.avatar.bgm import mix_bgm
 from src.avatar.merger import merge_videos
@@ -56,6 +56,9 @@ class DigitalHumanPipeline:
         watermark_text: str | None = None,
         watermark_image: str | Path | None = None,
         generate_cover_image: bool = True,
+        resolution: str = "720p",
+        parallel: bool = False,
+        use_cache: bool = True,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> Path:
         """
@@ -109,7 +112,9 @@ class DigitalHumanPipeline:
         _progress("[2/5] 导出幻灯片图片...", 0.12)
         slide_dir = self.output_dir / "slides"
         try:
-            self.slide_images = render_slides(ppt_path, slide_dir)
+            from src.avatar.compositor import _get_resolution
+            rw, rh = _get_resolution(resolution)
+            self.slide_images = render_slides(ppt_path, slide_dir, width=rw, height=rh)
             _progress(f"  导出完成: {len(self.slide_images)} 张", 0.2)
         except Exception as e:
             _progress(f"  幻灯片导出跳过: {e}", 0.2)
@@ -137,6 +142,7 @@ class DigitalHumanPipeline:
         self.audio_results = synthesize_pages(
             self.script_pages, audio_dir,
             rate=effective_rate, pitch=preset["pitch"], volume=preset["volume"],
+            use_cache=use_cache, parallel=parallel,
         )
 
         total_duration = sum(r.duration_seconds for r in self.audio_results.values())
@@ -160,25 +166,33 @@ class DigitalHumanPipeline:
             )
         else:
             label = "静态图片" if use_fallback else "SadTalker 未安装"
-            _progress(f"  使用 {label} 模式...", 0.6)
-            self.video_results = {}
-            for page_num, tts_result in self.audio_results.items():
-                n = len(self.audio_results)
-                page_pct = 0.6 + 0.25 * (page_num + 1) / n
-                _progress(f"  生成第 {page_num + 1} 页视频...", page_pct)
-                video_path = generate_fallback_video(
-                    audio_path=tts_result.audio_path,
+            mode_label = "并行" if parallel else "串行"
+            _progress(f"  使用 {label} 模式 [{mode_label}]...", 0.6)
+            if parallel:
+                self.video_results = generate_fallback_pages_parallel(
+                    self.audio_results,
                     source_image=avatar_image,
-                    output_path=self.output_dir / "video" / f"page_{page_num:03d}.mp4",
+                    output_dir=self.output_dir / "video",
                 )
-                self.video_results[page_num] = video_path
+            else:
+                self.video_results = {}
+                for page_num, tts_result in self.audio_results.items():
+                    n = len(self.audio_results)
+                    page_pct = 0.6 + 0.25 * (page_num + 1) / n
+                    _progress(f"  生成第 {page_num + 1} 页视频...", page_pct)
+                    video_path = generate_fallback_video(
+                        audio_path=tts_result.audio_path,
+                        source_image=avatar_image,
+                        output_path=self.output_dir / "video" / f"page_{page_num:03d}.mp4",
+                    )
+                    self.video_results[page_num] = video_path
 
         # Step 4.5: 画中画合成
         if layout == "pip" and self.slide_images:
             _progress("  合成画中画...", 0.88)
             pip_dir = self.output_dir / "pip"
             self.video_results = composite_pages(
-                self.slide_images, self.video_results, pip_dir
+                self.slide_images, self.video_results, pip_dir, resolution=resolution
             )
 
         # Step 4.6: 字幕叠加
@@ -286,6 +300,13 @@ def main():
                         help="图片水印路径")
     parser.add_argument("--no-cover", action="store_true",
                         help="不生成封面图")
+    parser.add_argument("--resolution", default="720p",
+                        choices=list(RESOLUTION_PRESETS.keys()),
+                        help="输出分辨率")
+    parser.add_argument("--parallel", action="store_true",
+                        help="并行处理 TTS 和视频生成")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="禁用 TTS 缓存")
 
     args = parser.parse_args()
 
@@ -309,6 +330,9 @@ def main():
         watermark_text=args.watermark,
         watermark_image=args.watermark_image,
         generate_cover_image=not args.no_cover,
+        resolution=args.resolution,
+        parallel=args.parallel,
+        use_cache=not args.no_cache,
     )
 
 

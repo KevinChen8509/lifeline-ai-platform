@@ -1,12 +1,19 @@
-"""TTS 语音合成引擎 - 支持 Edge TTS"""
+"""TTS 语音合成引擎 - 支持 Edge TTS，带缓存和并行"""
 
 import asyncio
+import hashlib
+import json
 from pathlib import Path
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 
 import edge_tts
 
 from src.config import TTS_VOICE, TTS_RATE, AUDIO_DIR
+
+# ============ 缓存 ============
+_CACHE_DIR = AUDIO_DIR / ".cache"
+_CACHE_INDEX = _CACHE_DIR / "index.json"
 
 
 @dataclass
@@ -17,6 +24,35 @@ class TTSResult:
     voice: str = ""
 
 
+def _cache_key(text: str, voice: str, rate: str, pitch: str, volume: str) -> str:
+    """生成缓存键"""
+    raw = f"{text}|{voice}|{rate}|{pitch}|{volume}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _load_cache_index() -> dict:
+    """加载缓存索引"""
+    if _CACHE_INDEX.exists():
+        try:
+            return json.loads(_CACHE_INDEX.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return {}
+    return {}
+
+
+def _save_cache_index(index: dict):
+    """保存缓存索引"""
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    _CACHE_INDEX.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def clear_tts_cache():
+    """清空 TTS 缓存"""
+    if _CACHE_DIR.exists():
+        import shutil
+        shutil.rmtree(_CACHE_DIR)
+
+
 async def _synthesize(
     text: str,
     output_path: str | Path,
@@ -24,18 +60,45 @@ async def _synthesize(
     rate: str = TTS_RATE,
     pitch: str = "+0Hz",
     volume: str = "+0%",
+    use_cache: bool = True,
 ) -> TTSResult:
-    """使用 Edge TTS 合成语音"""
+    """使用 Edge TTS 合成语音（支持缓存）"""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 检查缓存
+    if use_cache:
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        key = _cache_key(text, voice, rate, pitch, volume)
+        cache_file = _CACHE_DIR / f"{key}.mp3"
+        if cache_file.exists():
+            # 从缓存复制到目标
+            import shutil
+            shutil.copy2(cache_file, output_path)
+            # 估算时长
+            clean_text = text.replace("[PAUSE]", "").replace("[EMPHASIS]", "")
+            duration = len(clean_text) / 4.5
+            print(f"  [缓存命中] {output_path.name}")
+            return TTSResult(
+                audio_path=str(output_path),
+                duration_seconds=duration,
+                voice=voice,
+            )
 
     communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, volume=volume)
     await communicate.save(str(output_path))
 
+    # 写入缓存
+    if use_cache:
+        key = _cache_key(text, voice, rate, pitch, volume)
+        cache_file = _CACHE_DIR / f"{key}.mp3"
+        import shutil
+        shutil.copy2(output_path, cache_file)
+
     # 估算时长（Edge TTS 中文约 4-5 字/秒）
     clean_text = text.replace("[PAUSE]", "").replace("[EMPHASIS]", "")
     char_count = len(clean_text)
-    duration = char_count / 4.5  # 粗略估算
+    duration = char_count / 4.5
 
     return TTSResult(
         audio_path=str(output_path),
@@ -51,6 +114,7 @@ def synthesize_speech(
     rate: str | None = None,
     pitch: str = "+0Hz",
     volume: str = "+0%",
+    use_cache: bool = True,
 ) -> TTSResult:
     """
     文本转语音
@@ -88,7 +152,8 @@ def synthesize_speech(
 
     return asyncio.run(
         _synthesize(clean_text, output_path, voice=voice or TTS_VOICE,
-                    rate=rate or TTS_RATE, pitch=pitch, volume=volume)
+                    rate=rate or TTS_RATE, pitch=pitch, volume=volume,
+                    use_cache=use_cache)
     )
 
 
@@ -98,20 +163,46 @@ def synthesize_pages(
     rate: str | None = None,
     pitch: str = "+0Hz",
     volume: str = "+0%",
+    use_cache: bool = True,
+    parallel: bool = False,
+    max_workers: int = 4,
 ) -> dict[int, TTSResult]:
     """
     按页合成语音，返回 {页码: TTSResult}
+
+    Args:
+        parallel: 是否并行合成
+        max_workers: 并行线程数
     """
     if output_dir is None:
         output_dir = AUDIO_DIR
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    results = {}
-    for page_num, text in pages.items():
+    if not parallel:
+        # 串行模式
+        results = {}
+        for page_num, text in pages.items():
+            out_path = output_dir / f"page_{page_num:03d}.mp3"
+            print(f"  合成第 {page_num} 页语音 -> {out_path.name}")
+            results[page_num] = synthesize_speech(
+                text, out_path, rate=rate, pitch=pitch, volume=volume, use_cache=use_cache
+            )
+        return results
+
+    # 并行模式
+    def _syn_one(item):
+        page_num, text = item
         out_path = output_dir / f"page_{page_num:03d}.mp3"
         print(f"  合成第 {page_num} 页语音 -> {out_path.name}")
-        results[page_num] = synthesize_speech(text, out_path, rate=rate, pitch=pitch, volume=volume)
+        return page_num, synthesize_speech(
+            text, out_path, rate=rate, pitch=pitch, volume=volume, use_cache=use_cache
+        )
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for page_num, tts_result in pool.map(_syn_one, pages.items()):
+            results[page_num] = tts_result
 
     return results
 
