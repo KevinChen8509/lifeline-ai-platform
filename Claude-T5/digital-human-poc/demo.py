@@ -40,6 +40,9 @@ def main():
                         help="自定义 BGM 文件路径")
     parser.add_argument("--rate", default="+0%",
                         help="语速调节 (如 +20%%, -10%%)")
+    parser.add_argument("--language", default="auto",
+                        choices=["auto", "zh", "en"],
+                        help="演讲语言 (auto=自动检测, zh=中文, en=英文)")
     parser.add_argument("--batch", default=None,
                         help="批量处理: 指定目录，处理其中所有 .pptx 文件")
     args = parser.parse_args()
@@ -71,6 +74,7 @@ def main():
                 bgm=not args.no_bgm,
                 bgm_path=args.bgm_file,
                 rate=args.rate,
+                language=args.language,
             )
         return
 

@@ -28,6 +28,7 @@ from src.avatar.compositor import composite_pages
 from src.avatar.bgm import mix_bgm
 from src.avatar.merger import merge_videos
 from src.history import add_record, format_history_md
+from src.detectors.language import detect_language, get_default_voice
 
 # ============ 常量 ============
 
@@ -49,6 +50,12 @@ RATE_CHOICES = {
     "正常": "+0%",
     "快速 (+20%)": "+20%",
     "极快 (+50%)": "+50%",
+}
+
+LANGUAGE_CHOICES = {
+    "自动检测": "auto",
+    "中文": "zh",
+    "English": "en",
 }
 
 AVATAR_CHOICES = {
@@ -96,6 +103,7 @@ def generate(
     enable_bgm: bool,
     rate_name: str,
     custom_bgm,
+    language_name: str,
     progress=gr.Progress(),
 ):
     """核心处理函数 — 生成器，流式更新 UI"""
@@ -110,7 +118,7 @@ def generate(
 
     # 准备参数
     style = STYLE_CHOICES.get(style_name, "formal")
-    voice = VOICE_MAP.get(voice_name, "zh-CN-YunxiNeural")
+    language = LANGUAGE_CHOICES.get(language_name, "auto")
     use_fallback = mode == "fallback" or "静态" in mode or "快速" in mode
     layout = LAYOUT_CHOICES.get(layout_name, "pip")
     rate = RATE_CHOICES.get(rate_name, "+0%")
@@ -137,10 +145,22 @@ def generate(
         return
 
     markdown = slides_to_markdown(slides)
-    info = f"**共 {len(slides)} 页**\n\n"
+
+    # 检测语言
+    if language == "auto":
+        language = detect_language(markdown)
+    lang_label = "中文" if language == "zh" else "English"
+
+    # 英文内容自动切换英文语音
+    if language == "en":
+        voice = get_default_voice("en")
+    else:
+        voice = VOICE_MAP.get(voice_name, "zh-CN-YunxiNeural")
+
+    info = f"**共 {len(slides)} 页** | 语言: {lang_label}\n\n"
     for s in slides:
         info += f"- 第{s.slide_index + 1}页: {s.title or '(无标题)'}\n"
-    yield (info, None, None, status(f"解析完成: {len(slides)} 页"), None)
+    yield (info, None, None, status(f"解析完成: {len(slides)} 页 [{lang_label}]"), None)
 
     # === Step 1.5: 导出幻灯片图片 ===
     slide_images = []
@@ -157,13 +177,13 @@ def generate(
     # === Step 2: 生成演讲稿 ===
     progress(0.15, desc="生成演讲稿...")
     try:
-        script = generate_script(markdown, style=style)
+        script = generate_script(markdown, style=style, language=language)
         script_pages = parse_script_pages(script)
     except Exception as e:
         yield (info + f"\n\n**生成失败**: {e}", None, None, f"错误: {e}", None)
         return
 
-    script_display = f"**{len(script_pages)} 段演讲稿**\n\n---\n\n"
+    script_display = f"**{len(script_pages)} 段演讲稿** [{lang_label}]\n\n---\n\n"
     for pn, text in sorted(script_pages.items()):
         script_display += f"### 第 {pn + 1} 页\n{text}\n\n---\n\n"
     script_file = output_dir / "script.txt"
@@ -314,6 +334,7 @@ def generate_preview(
     avatar_choice: str,
     avatar_upload,
     rate_name: str,
+    language_name: str,
     progress=gr.Progress(),
 ):
     """快速预览 — 每页只取前 50 字，静态图片模式，跳过 PIP/字幕/BGM"""
@@ -324,8 +345,8 @@ def generate_preview(
 
     start = time.time()
     style = STYLE_CHOICES.get(style_name, "formal")
-    voice = VOICE_MAP.get(voice_name, "zh-CN-YunxiNeural")
     rate = RATE_CHOICES.get(rate_name, "+0%")
+    language = LANGUAGE_CHOICES.get(language_name, "auto")
 
     if avatar_choice == "自定义上传" and avatar_upload is not None:
         avatar_path = avatar_upload
@@ -348,7 +369,12 @@ def generate_preview(
         return
 
     markdown = slides_to_markdown(slides)
-    info = f"**[预览模式] 共 {len(slides)} 页**\n\n"
+    if language == "auto":
+        language = detect_language(markdown)
+    lang_label = "中文" if language == "zh" else "English"
+    voice = get_default_voice(language) if language == "en" else VOICE_MAP.get(voice_name, "zh-CN-YunxiNeural")
+
+    info = f"**[预览模式] 共 {len(slides)} 页** [{lang_label}]\n\n"
     for s in slides:
         info += f"- 第{s.slide_index + 1}页: {s.title or '(无标题)'}\n"
     yield (info, None, None, status(f"解析完成: {len(slides)} 页"), None)
@@ -356,7 +382,7 @@ def generate_preview(
     # Step 2: 生成演讲稿
     progress(0.2, desc="生成演讲稿...")
     try:
-        script = generate_script(markdown, style=style)
+        script = generate_script(markdown, style=style, language=language)
         script_pages = parse_script_pages(script)
     except Exception as e:
         yield (info + f"\n\n**生成失败**: {e}", None, None, f"错误: {e}", None)
@@ -578,6 +604,12 @@ def build_ui():
                     label="演讲风格",
                 )
 
+                language_dd = gr.Dropdown(
+                    choices=list(LANGUAGE_CHOICES.keys()),
+                    value="自动检测",
+                    label="演讲语言",
+                )
+
                 voice_dd = gr.Dropdown(
                     choices=list(VOICE_MAP.keys()),
                     value="中文男声-云希（年轻阳光）",
@@ -686,20 +718,20 @@ def build_ui():
             fn=generate,
             inputs=[ppt_input, style_dd, voice_dd,
                     avatar_radio, avatar_file, mode_radio, layout_dd,
-                    subtitle_cb, bgm_cb, rate_dd, bgm_file],
+                    subtitle_cb, bgm_cb, rate_dd, bgm_file, language_dd],
             outputs=[script_out, audio_out, video_out, status_box, export_files],
         )
         preview_btn.click(
             fn=generate_preview,
             inputs=[ppt_input, style_dd, voice_dd,
-                    avatar_radio, avatar_file, rate_dd],
+                    avatar_radio, avatar_file, rate_dd, language_dd],
             outputs=[script_out, audio_out, video_out, status_box, export_files],
         )
         batch_btn.click(
             fn=generate_batch,
             inputs=[ppt_input, style_dd, voice_dd,
                     avatar_radio, avatar_file, mode_radio, layout_dd,
-                    subtitle_cb, bgm_cb, rate_dd, bgm_file],
+                    subtitle_cb, bgm_cb, rate_dd, bgm_file, language_dd],
             outputs=[script_out, audio_out, video_out, status_box, export_files],
         )
 

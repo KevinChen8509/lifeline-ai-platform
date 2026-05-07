@@ -7,6 +7,7 @@ from typing import Callable
 from src.config import OUTPUT_DIR, TEMPLATES_DIR
 from src.parsers.ppt_parser import parse_ppt, slides_to_markdown, slides_to_json
 from src.parsers.slide_renderer import render_slides
+from src.detectors.language import detect_language, get_default_voice
 from src.generators.script_generator import generate_script, parse_script_pages
 from src.tts.engine import synthesize_pages, synthesize_speech
 from src.avatar.sadtalker_driver import (
@@ -47,6 +48,7 @@ class DigitalHumanPipeline:
         bgm: bool = True,
         bgm_path: str | Path | None = None,
         rate: str = "+0%",
+        language: str = "auto",
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> Path:
         """
@@ -91,6 +93,11 @@ class DigitalHumanPipeline:
         )
         _progress(f"  解析完成: {len(self.slides)} 页", 0.1)
 
+        # 检测语言
+        if language == "auto":
+            language = detect_language(markdown)
+        _progress(f"  检测语言: {'中文' if language == 'zh' else 'English'}", 0.11)
+
         # Step 1.5: 导出幻灯片图片
         _progress("[2/5] 导出幻灯片图片...", 0.12)
         slide_dir = self.output_dir / "slides"
@@ -104,7 +111,7 @@ class DigitalHumanPipeline:
 
         # Step 2: 生成演讲稿
         _progress("[3/5] 生成演讲稿...", 0.25)
-        self.script = generate_script(markdown, style=style)
+        self.script = generate_script(markdown, style=style, language=language)
         self.script_pages = parse_script_pages(self.script)
 
         (self.output_dir / "script.txt").write_text(
@@ -226,6 +233,9 @@ def main():
                         help="自定义 BGM 文件路径")
     parser.add_argument("--rate", default="+0%",
                         help="语速调节 (如 +20%%, -10%%)")
+    parser.add_argument("--language", default="auto",
+                        choices=["auto", "zh", "en"],
+                        help="演讲语言 (auto=自动检测, zh=中文, en=英文)")
 
     args = parser.parse_args()
 
@@ -243,6 +253,7 @@ def main():
         bgm=not args.no_bgm,
         bgm_path=args.bgm_file,
         rate=args.rate,
+        language=args.language,
     )
 
 
