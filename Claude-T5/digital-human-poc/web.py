@@ -261,13 +261,25 @@ def generate(
                 output_path=video_out,
             )
         elif check_sadtalker_installed():
-            cpu = should_use_cpu()
-            videos[pn] = generate_video_sadtalker(
-                audio_path=str(audio_out),
-                output_path=video_out,
-                source_image=avatar_path,
-                use_cpu=cpu,
-            )
+            try:
+                cpu = should_use_cpu()
+                videos[pn] = generate_video_sadtalker(
+                    audio_path=str(audio_out),
+                    output_path=video_out,
+                    source_image=avatar_path,
+                    use_cpu=cpu,
+                )
+            except Exception as sadtalker_err:
+                # SadTalker 失败时自动降级为 fallback
+                print(f"  SadTalker 失败，降级为静态图片: {sadtalker_err}")
+                yield (script_display, audio_paths[-1] if audio_paths else None, None,
+                       status(f"SadTalker 失败，自动切换为快速模式..."), None)
+                use_fallback = True
+                videos[pn] = generate_fallback_video(
+                    audio_path=str(audio_out),
+                    source_image=avatar_path,
+                    output_path=video_out,
+                )
         else:
             yield (script_display, None, None,
                    "SadTalker 未安装，请选择快速模式", None)

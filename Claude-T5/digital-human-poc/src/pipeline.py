@@ -254,10 +254,16 @@ class DigitalHumanPipeline:
             auto_cpu = should_use_cpu() if use_cpu is None else use_cpu
             mode = "CPU" if auto_cpu else "GPU"
             _progress(f"  使用 SadTalker [{mode} 模式]...", 0.6)
-            self.video_results = generate_videos_for_pages(
-                self.audio_results, source_image=avatar_image, use_cpu=use_cpu
-            )
-        else:
+            try:
+                self.video_results = generate_videos_for_pages(
+                    self.audio_results, source_image=avatar_image, use_cpu=use_cpu
+                )
+            except Exception as e:
+                _progress(f"  SadTalker 失败，降级为静态图片: {e}", 0.6)
+                use_sadtalker = False
+                use_fallback = True
+
+        if not use_sadtalker:
             label = "静态图片" if use_fallback else "SadTalker 未安装"
             mode_label = "并行" if parallel else "串行"
             _progress(f"  使用 {label} 模式 [{mode_label}]...", 0.6)
