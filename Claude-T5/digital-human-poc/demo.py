@@ -46,6 +46,17 @@ def main():
     parser.add_argument("--emotion", default="default",
                         choices=["default", "cheerful", "serious", "gentle", "energetic", "calm"],
                         help="语音情感风格")
+    parser.add_argument("--transition", default="fade",
+                        choices=["fade", "wipeleft", "wipeup", "dissolve",
+                                 "slidedown", "circlecrop", "radial",
+                                 "smoothleft", "none"],
+                        help="转场效果")
+    parser.add_argument("--watermark", default=None,
+                        help="文字水印内容")
+    parser.add_argument("--watermark-image", default=None,
+                        help="图片水印路径")
+    parser.add_argument("--no-cover", action="store_true",
+                        help="不生成封面图")
     parser.add_argument("--batch", default=None,
                         help="批量处理: 指定目录，处理其中所有 .pptx 文件")
     args = parser.parse_args()
@@ -79,6 +90,10 @@ def main():
                 rate=args.rate,
                 language=args.language,
                 emotion=args.emotion,
+                transition=args.transition,
+                watermark_text=args.watermark,
+                watermark_image=args.watermark_image,
+                generate_cover_image=not args.no_cover,
             )
         return
 
@@ -101,6 +116,10 @@ def main():
         bgm=not args.no_bgm,
         bgm_path=args.bgm_file,
         rate=args.rate,
+        transition=args.transition,
+        watermark_text=args.watermark,
+        watermark_image=args.watermark_image,
+        generate_cover_image=not args.no_cover,
     )
 
 

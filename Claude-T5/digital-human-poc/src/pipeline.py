@@ -20,6 +20,8 @@ from src.avatar.compositor import composite_pages
 from src.avatar.subtitle import add_subtitles_to_pages
 from src.avatar.bgm import mix_bgm
 from src.avatar.merger import merge_videos
+from src.avatar.watermark import add_text_watermark, add_image_watermark
+from src.avatar.cover import generate_cover, generate_slideshow_cover
 
 
 class DigitalHumanPipeline:
@@ -50,6 +52,10 @@ class DigitalHumanPipeline:
         rate: str = "+0%",
         language: str = "auto",
         emotion: str = "default",
+        transition: str = "fade",
+        watermark_text: str | None = None,
+        watermark_image: str | Path | None = None,
+        generate_cover_image: bool = True,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> Path:
         """
@@ -196,7 +202,7 @@ class DigitalHumanPipeline:
             _progress("合并视频...", 0.93)
             if len(video_list) > 1:
                 final_output = self.output_dir / (output_name or f"{stem}_final.mp4")
-                final_path = merge_videos(video_list, final_output)
+                final_path = merge_videos(video_list, final_output, transition=transition)
             else:
                 final_path = video_list[0]
 
@@ -204,6 +210,27 @@ class DigitalHumanPipeline:
             if bgm:
                 _progress("混合背景音乐...", 0.97)
                 final_path = mix_bgm(final_path, bgm_path=bgm_path)
+
+            # Step 6: 水印
+            if watermark_text:
+                _progress("添加文字水印...", 0.98)
+                wm_path = self.output_dir / f"{stem}_wm.mp4"
+                final_path = add_text_watermark(final_path, text=watermark_text, output_path=wm_path)
+            elif watermark_image:
+                _progress("添加图片水印...", 0.98)
+                wm_path = self.output_dir / f"{stem}_wm.mp4"
+                final_path = add_image_watermark(final_path, image_path=watermark_image, output_path=wm_path)
+
+            # Step 7: 封面
+            if generate_cover_image:
+                _progress("生成封面...", 0.99)
+                try:
+                    if self.slide_images:
+                        generate_slideshow_cover(self.slide_images, self.output_dir / "cover.png")
+                    else:
+                        generate_cover(final_path, self.output_dir / "cover.png")
+                except Exception as e:
+                    _progress(f"  封面生成跳过: {e}", 0.99)
 
             elapsed = time.time() - start
             _progress(f"完成! 总耗时 {elapsed:.0f}s", 1.0)
@@ -248,6 +275,17 @@ def main():
     parser.add_argument("--emotion", default="default",
                         choices=list(EMOTION_PRESETS.keys()),
                         help="语音情感风格")
+    parser.add_argument("--transition", default="fade",
+                        choices=["fade", "wipeleft", "wipeup", "dissolve",
+                                 "slidedown", "circlecrop", "radial",
+                                 "smoothleft", "none"],
+                        help="转场效果")
+    parser.add_argument("--watermark", default=None,
+                        help="文字水印内容")
+    parser.add_argument("--watermark-image", default=None,
+                        help="图片水印路径")
+    parser.add_argument("--no-cover", action="store_true",
+                        help="不生成封面图")
 
     args = parser.parse_args()
 
@@ -267,6 +305,10 @@ def main():
         rate=args.rate,
         language=args.language,
         emotion=args.emotion,
+        transition=args.transition,
+        watermark_text=args.watermark,
+        watermark_image=args.watermark_image,
+        generate_cover_image=not args.no_cover,
     )
 
 

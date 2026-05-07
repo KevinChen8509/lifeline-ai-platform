@@ -26,7 +26,9 @@ from src.avatar.sadtalker_driver import (
 from src.avatar.fallback_driver import generate_fallback_video
 from src.avatar.compositor import composite_pages
 from src.avatar.bgm import mix_bgm
-from src.avatar.merger import merge_videos
+from src.avatar.merger import merge_videos, TRANSITION_CHOICES
+from src.avatar.watermark import add_text_watermark, add_image_watermark
+from src.avatar.cover import generate_cover, generate_slideshow_cover
 from src.history import add_record, format_history_md
 from src.detectors.language import detect_language, get_default_voice
 
@@ -59,6 +61,16 @@ LANGUAGE_CHOICES = {
 }
 
 EMOTION_MAP = {f"{v['desc']} ({k})": k for k, v in EMOTION_PRESETS.items()}
+
+TRANSITION_MAP = {k: v for k, v in TRANSITION_CHOICES.items()}
+
+POSITION_CHOICES = {
+    "右下角": "bottom-right",
+    "左下角": "bottom-left",
+    "右上角": "top-right",
+    "左上角": "top-left",
+    "居中": "center",
+}
 
 AVATAR_CHOICES = {
     "默认头像 (art_0)": "SadTalker/examples/source_image/art_0.png",
@@ -107,6 +119,10 @@ def generate(
     custom_bgm,
     language_name: str,
     emotion_name: str,
+    transition_name: str,
+    watermark_text: str,
+    watermark_image,
+    enable_cover: bool,
     progress=gr.Progress(),
 ):
     """核心处理函数 — 生成器，流式更新 UI"""
@@ -126,6 +142,7 @@ def generate(
     layout = LAYOUT_CHOICES.get(layout_name, "pip")
     rate = RATE_CHOICES.get(rate_name, "+0%")
     emotion = EMOTION_MAP.get(emotion_name, "default")
+    transition = TRANSITION_MAP.get(transition_name, "fade")
     preset = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS["default"])
     effective_rate = rate if rate != "+0%" else preset["rate"]
 
@@ -306,7 +323,7 @@ def generate(
     video_list = [videos[p] for p in sorted_pns]
     if len(video_list) > 1:
         final = output_dir / "final.mp4"
-        merge_videos(video_list, final)
+        merge_videos(video_list, final, transition=transition)
     else:
         final = video_list[0]
 
@@ -314,6 +331,35 @@ def generate(
     if enable_bgm:
         progress(0.97, desc="混合背景音乐...")
         final = mix_bgm(final, bgm_path=custom_bgm or None)
+
+    # 水印
+    if watermark_text and watermark_text.strip():
+        progress(0.98, desc="添加水印...")
+        try:
+            wm_path = output_dir / "final_wm.mp4"
+            final = add_text_watermark(final, text=watermark_text.strip(), output_path=wm_path)
+        except Exception as e:
+            yield (script_display, merged_audio, str(final),
+                   f"水印添加失败: {e}", export_paths)
+    elif watermark_image:
+        progress(0.98, desc="添加图片水印...")
+        try:
+            wm_path = output_dir / "final_wm.mp4"
+            final = add_image_watermark(final, image_path=watermark_image, output_path=wm_path)
+        except Exception as e:
+            yield (script_display, merged_audio, str(final),
+                   f"水印添加失败: {e}", export_paths)
+
+    # 封面
+    if enable_cover:
+        try:
+            if slide_images:
+                cover_path = generate_slideshow_cover(slide_images, output_dir / "cover.png")
+            else:
+                cover_path = generate_cover(final, output_dir / "cover.png")
+            export_paths.append(str(cover_path))
+        except Exception:
+            pass
 
     elapsed = time.time() - start
     export_paths.append(str(final))
@@ -700,6 +746,28 @@ def build_ui():
                     type="filepath",
                 )
 
+                transition_dd = gr.Dropdown(
+                    choices=list(TRANSITION_MAP.keys()),
+                    value="淡入淡出 (fade)",
+                    label="转场效果",
+                )
+
+                wm_text = gr.Textbox(
+                    label="文字水印（留空不加）",
+                    placeholder="如: 公司名/汇报人",
+                )
+
+                wm_image = gr.File(
+                    label="图片水印/Logo（留空不加）",
+                    file_types=["image"],
+                    type="filepath",
+                )
+
+                cover_cb = gr.Checkbox(
+                    value=True,
+                    label="生成封面图",
+                )
+
                 gen_btn = gr.Button("生成", variant="primary", size="lg")
                 preview_btn = gr.Button("快速预览", size="lg")
                 batch_btn = gr.Button("批量生成", size="lg")
@@ -738,7 +806,8 @@ def build_ui():
             fn=generate,
             inputs=[ppt_input, style_dd, voice_dd,
                     avatar_radio, avatar_file, mode_radio, layout_dd,
-                    subtitle_cb, bgm_cb, rate_dd, bgm_file, language_dd, emotion_dd],
+                    subtitle_cb, bgm_cb, rate_dd, bgm_file, language_dd, emotion_dd,
+                    transition_dd, wm_text, wm_image, cover_cb],
             outputs=[script_out, audio_out, video_out, status_box, export_files],
         )
         preview_btn.click(

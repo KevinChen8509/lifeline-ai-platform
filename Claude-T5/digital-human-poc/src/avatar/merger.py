@@ -4,6 +4,20 @@ import subprocess
 from pathlib import Path
 
 
+# 可用转场效果（已验证 FFmpeg 8.1 xfade 支持）
+TRANSITION_CHOICES = {
+    "淡入淡出 (fade)": "fade",
+    "擦除-左 (wipeleft)": "wipeleft",
+    "擦除-上 (wipeup)": "wipeup",
+    "溶解 (dissolve)": "dissolve",
+    "滑入-下 (slidedown)": "slidedown",
+    "圆形裁剪 (circlecrop)": "circlecrop",
+    "径向 (radial)": "radial",
+    "平滑-左 (smoothleft)": "smoothleft",
+    "无转场": "none",
+}
+
+
 def _get_duration(video_path: Path) -> float:
     """获取视频时长（秒）"""
     result = subprocess.run(
