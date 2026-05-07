@@ -1,0 +1,26 @@
+# 数字人汇报系统 - Python 依赖
+# ==========================================
+# 安装: pip install -r requirements.txt
+
+# ---- 核心 ----
+python-dotenv>=1.0.0
+python-pptx>=1.0.0            # PPT 解析
+openai>=1.30.0                # LLM API 调用（兼容 OpenAI 格式的所有模型）
+edge-tts>=6.1.0               # 免费中文 TTS
+
+# ---- Web UI ----
+gradio>=5.0.0                 # Web 界面
+
+# ---- 数字人驱动（可选）----
+# SadTalker 需要单独安装，详见 README
+# facexlib>=0.3.0
+# gfpgan>=1.3.8
+
+# ---- 视频处理 ----
+# ffmpeg 需要系统级安装（非 pip 包）
+
+# ---- PPT 幻灯片导出 (Windows) ----
+pywin32>=306                      # PowerPoint COM 自动化
+
+# ---- 开发工具 ----
+pytest>=8.0.0

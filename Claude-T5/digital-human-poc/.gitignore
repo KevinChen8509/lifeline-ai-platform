@@ -1,0 +1,28 @@
+# 忽略生成的文件
+outputs/
+audio/
+video/
+*.mp3
+*.mp4
+*.wav
+# 保留默认 BGM
+!assets/bgm_default.wav
+
+# 环境配置
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# SadTalker (源码 + 模型，太大不提交)
+SadTalker/
+gfpgan/
+
+# IDE
+.vscode/
+.idea/
+*.partial

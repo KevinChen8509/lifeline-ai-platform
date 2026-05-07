@@ -1,0 +1,121 @@
+"""演讲稿生成器 - 基于 LLM 将 PPT 内容转为自然演讲稿"""
+
+from openai import OpenAI
+from src.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, LLM_TEMPERATURE
+
+SYSTEM_PROMPT = """你是一位专业的演讲稿撰写专家。你的任务是将 PPT 的内容转化为自然、流畅的口语化演讲稿。
+
+要求：
+1. 语言自然，像真人演讲一样，避免书面化表述
+2. 每页内容对应一段演讲，用 [PAGE:N] 标记页码
+3. 在适当位置加入过渡语（"接下来"、"这里值得注意的是" 等）
+4. 对关键数据和重点内容加强调语气标记：**粗体**
+5. 用 [PAUSE] 标记需要停顿的位置
+6. 用 [EMPHASIS] 标记需要重读的内容
+7. 开头要有吸引人的开场白，结尾要有总结
+8. 控制每页演讲时长约 30-60 秒
+
+输出格式示例：
+---
+[PAGE:0]
+大家好，今天我来为大家汇报......
+
+[PAUSE]
+
+[PAGE:1]
+接下来我们看一下......
+
+[EMPHASIS] 这是本页的重点 **关键数据**
+
+[PAUSE]
+---
+"""
+
+
+def generate_script(
+    slides_markdown: str,
+    style: str = "formal",
+    language: str = "zh",
+    duration_minutes: int | None = None,
+) -> str:
+    """
+    根据PPT内容生成演讲稿
+
+    Args:
+        slides_markdown: PPT的Markdown格式内容
+        style: 演讲风格 (formal-正式汇报, casual-轻松讲解, training-培训教学)
+        language: 语言 (zh-中文, en-英文)
+        duration_minutes: 预期时长（分钟），None则自动控制
+    """
+    if not LLM_API_KEY:
+        raise ValueError("请设置 LLM_API_KEY 环境变量（在 .env 文件中）")
+
+    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+
+    style_map = {
+        "formal": "正式商务汇报风格，语气专业严谨",
+        "casual": "轻松自然的讲解风格，像和朋友聊天",
+        "training": "培训教学风格，条理清晰，适合学习",
+    }
+    style_desc = style_map.get(style, style_map["formal"])
+
+    user_prompt = f"以下是 PPT 的全部内容，请将其转化为{style_desc}的演讲稿：\n\n{slides_markdown}"
+    if duration_minutes:
+        user_prompt += f"\n\n请控制总演讲时长约 {duration_minutes} 分钟。"
+
+    response = client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=LLM_TEMPERATURE,
+        max_tokens=4096,
+    )
+
+    return response.choices[0].message.content
+
+
+def parse_script_pages(script: str) -> dict[int, str]:
+    """将生成的演讲稿按页拆分，返回 {页码: 演讲文本}"""
+    pages = {}
+    current_page = 0
+    current_text = []
+
+    for line in script.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("[PAGE:"):
+            # 保存上一页
+            if current_text:
+                pages[current_page] = "\n".join(current_text).strip()
+            # 解析页码
+            try:
+                current_page = int(stripped.replace("[PAGE:", "").replace("]", ""))
+            except ValueError:
+                current_page += 1
+            current_text = []
+        else:
+            current_text.append(line)
+
+    # 最后一页
+    if current_text:
+        pages[current_page] = "\n".join(current_text).strip()
+
+    return pages
+
+
+if __name__ == "__main__":
+    import sys
+    from src.parsers.ppt_parser import parse_ppt, slides_to_markdown
+
+    if len(sys.argv) < 2:
+        print("用法: python script_generator.py <ppt文件路径> [style=formal]")
+        sys.exit(1)
+
+    slides = parse_ppt(sys.argv[1])
+    md = slides_to_markdown(slides)
+    style = sys.argv[2] if len(sys.argv) > 2 else "formal"
+
+    print("正在生成演讲稿...")
+    result = generate_script(md, style=style)
+    print(result)
