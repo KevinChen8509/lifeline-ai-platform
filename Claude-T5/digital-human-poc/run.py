@@ -12,7 +12,7 @@ def test_ppt_parser():
     print("\n=== 测试 PPT 解析器 ===")
     from src.parsers.ppt_parser import parse_ppt
 
-    sample = Path(__file__).parent / "samples" / "demo.pummy.pptx"
+    sample = Path(__file__).parent / "samples" / "demo.pptx"
     if not sample.exists():
         print(f"  跳过: 示例 PPT 不存在 ({sample})")
         print("  提示: 放一个 .pptx 文件到 samples/ 目录下即可测试")

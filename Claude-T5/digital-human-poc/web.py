@@ -7,7 +7,6 @@
 
 import sys
 import time
-import subprocess
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -28,7 +27,7 @@ from src.avatar.fallback_driver import generate_fallback_video
 from src.avatar.compositor import composite_pages
 from src.avatar.bgm import mix_bgm
 from src.avatar.merger import merge_videos
-from src.history import add_record, format_history_md, load_history
+from src.history import add_record, format_history_md
 
 # ============ 常量 ============
 
@@ -187,9 +186,6 @@ def generate(
     # 合并音频
     merged_audio = str(output_dir / "merged_audio.mp3")
     _merge_audios(audio_paths, merged_audio)
-    total_dur = sum(
-        Path(p).stat().st_size for p in audio_paths
-    )  # rough indicator
     export_paths.extend(audio_paths)
     yield (script_display, merged_audio, None, status("语音合成完成"), None)
 
@@ -517,18 +513,11 @@ def generate_batch(
             for pn in sorted(script_pages.keys()):
                 audio_p = audio_dir / f"page_{pn:03d}.mp3"
                 out = video_dir / f"page_{pn:03d}.mp4"
-                if use_fallback:
-                    videos[pn] = generate_fallback_video(
-                        audio_path=str(audio_p),
-                        source_image=avatar_path,
-                        output_path=out,
-                    )
-                else:
-                    videos[pn] = generate_fallback_video(
-                        audio_path=str(audio_p),
-                        source_image=avatar_path,
-                        output_path=out,
-                    )
+                videos[pn] = generate_fallback_video(
+                    audio_path=str(audio_p),
+                    source_image=avatar_path,
+                    output_path=out,
+                )
 
             # 合并
             sorted_pns = sorted(videos.keys())
