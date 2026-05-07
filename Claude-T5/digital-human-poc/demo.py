@@ -57,6 +57,15 @@ def main():
                         help="图片水印路径")
     parser.add_argument("--no-cover", action="store_true",
                         help="不生成封面图")
+    parser.add_argument("--resolution", default="720p",
+                        choices=["480p", "720p", "1080p", "4K"],
+                        help="输出分辨率")
+    parser.add_argument("--parallel", action="store_true",
+                        help="并行处理 TTS 和视频生成")
+    parser.add_argument("--no-cache", action="store_true",
+                        help="禁用 TTS 缓存")
+    parser.add_argument("--resume", action="store_true",
+                        help="从上次失败的步骤继续")
     parser.add_argument("--batch", default=None,
                         help="批量处理: 指定目录，处理其中所有 .pptx 文件")
     args = parser.parse_args()
@@ -94,6 +103,10 @@ def main():
                 watermark_text=args.watermark,
                 watermark_image=args.watermark_image,
                 generate_cover_image=not args.no_cover,
+                resolution=args.resolution,
+                parallel=args.parallel,
+                use_cache=not args.no_cache,
+                resume=args.resume,
             )
         return
 
@@ -120,6 +133,10 @@ def main():
         watermark_text=args.watermark,
         watermark_image=args.watermark_image,
         generate_cover_image=not args.no_cover,
+        resolution=args.resolution,
+        parallel=args.parallel,
+        use_cache=not args.no_cache,
+        resume=args.resume,
     )
 
 
