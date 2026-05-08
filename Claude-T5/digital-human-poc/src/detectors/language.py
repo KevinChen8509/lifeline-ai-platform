@@ -15,6 +15,8 @@ def detect_language(text: str) -> str:
     # 统计英文单词数
     english_words = len(re.findall(r'[a-zA-Z]+', text))
 
+    if chinese_chars == 0 and english_words == 0:
+        return "zh"  # 默认中文
     if chinese_chars > english_words:
         return "zh"
     return "en"

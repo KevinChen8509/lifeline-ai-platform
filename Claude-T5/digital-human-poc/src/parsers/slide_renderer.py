@@ -1,6 +1,5 @@
 """PPT 幻灯片渲染 - 将 PPT 页面导出为图片"""
 
-import os
 import subprocess
 from pathlib import Path
 

@@ -6,6 +6,7 @@
 """
 
 import sys
+import subprocess
 import time
 from pathlib import Path
 
@@ -311,8 +312,7 @@ def generate(
         page_durations = {}
         for pn in sorted(script_pages.keys()):
             audio_p = audio_dir / f"page_{pn:03d}.mp3"
-            import subprocess as sp
-            probe = sp.run(
+            probe = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                  "-of", "default=noprint_wrappers=1:nokey=1", str(audio_p)],
                 capture_output=True, text=True,
