@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +11,22 @@ from concurrent.futures import ThreadPoolExecutor
 import edge_tts
 
 from src.config import TTS_VOICE, TTS_RATE, AUDIO_DIR
+
+
+def _get_audio_duration(audio_path: str | Path) -> float:
+    """用 ffprobe 获取音频实际时长（秒）"""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error",
+             "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1",
+             str(audio_path)],
+            capture_output=True, text=True,
+        )
+        return float(result.stdout.strip())
+    except (ValueError, OSError):
+        return 0.0
+
 
 # ============ 缓存 ============
 _CACHE_DIR = AUDIO_DIR / ".cache"
@@ -75,9 +92,7 @@ async def _synthesize(
             # 从缓存复制到目标
             import shutil
             shutil.copy2(cache_file, output_path)
-            # 估算时长
-            clean_text = text.replace("[PAUSE]", "").replace("[EMPHASIS]", "")
-            duration = len(clean_text) / 4.5
+            duration = _get_audio_duration(output_path)
             print(f"  [缓存命中] {output_path.name}")
             return TTSResult(
                 audio_path=str(output_path),
@@ -95,10 +110,8 @@ async def _synthesize(
         import shutil
         shutil.copy2(output_path, cache_file)
 
-    # 估算时长（Edge TTS 中文约 4-5 字/秒）
-    clean_text = text.replace("[PAUSE]", "").replace("[EMPHASIS]", "")
-    char_count = len(clean_text)
-    duration = char_count / 4.5
+    # 获取实际时长
+    duration = _get_audio_duration(output_path)
 
     return TTSResult(
         audio_path=str(output_path),
