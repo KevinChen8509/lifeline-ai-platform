@@ -185,3 +185,44 @@ def test_cover_custom_offset(tmp_output):
     out = tmp_output / "cover_2s.png"
     result = generate_cover(video, output_path=out, time_offset=2.0)
     assert result.exists()
+
+
+# ============ Pipeline 清理测试 ============
+
+def test_pipeline_cleanup(tmp_output):
+    """测试中间文件清理"""
+    from src.pipeline import DigitalHumanPipeline
+    pipeline = DigitalHumanPipeline()
+    pipeline.output_dir = tmp_output
+
+    # 创建模拟中间目录
+    for d in ("video", "pip", "subtitle", "audio"):
+        (tmp_output / d).mkdir(parents=True, exist_ok=True)
+        (tmp_output / d / "test.tmp").write_text("temp")
+
+    # 创建应保留的文件
+    (tmp_output / "script.txt").write_text("script")
+    final = tmp_output / "final.mp4"
+    final.write_bytes(b"\x00" * 100)
+
+    pipeline._cleanup(preserve=final)
+
+    # 中间目录应被删除
+    assert not (tmp_output / "video").exists()
+    assert not (tmp_output / "pip").exists()
+    assert not (tmp_output / "subtitle").exists()
+    assert not (tmp_output / "audio").exists()
+    # 保留文件应存在
+    assert (tmp_output / "script.txt").exists()
+    assert final.exists()
+
+
+def test_pipeline_cleanup_no_preserve(tmp_output):
+    """测试无保留文件的清理"""
+    from src.pipeline import DigitalHumanPipeline
+    pipeline = DigitalHumanPipeline()
+    pipeline.output_dir = tmp_output
+    (tmp_output / "video").mkdir()
+    (tmp_output / "video" / "test.tmp").write_text("temp")
+    pipeline._cleanup(preserve=None)
+    assert not (tmp_output / "video").exists()

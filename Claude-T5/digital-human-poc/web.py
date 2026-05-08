@@ -318,7 +318,8 @@ def generate(
     if layout == "pip" and slide_images:
         progress(0.9, desc="合成画中画...")
         pip_dir = output_dir / "pip"
-        videos = composite_pages(slide_images, videos, pip_dir, resolution=resolution)
+        videos = composite_pages(slide_images, videos, pip_dir,
+                                 resolution=resolution, parallel=enable_parallel)
 
     # === Step 4.6: 字幕叠加 ===
     if enable_subtitles:

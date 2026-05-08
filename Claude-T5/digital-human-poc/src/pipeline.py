@@ -92,6 +92,28 @@ class DigitalHumanPipeline:
         """从检查点恢复幻灯片图片"""
         self.slide_images = [Path(p) for p in cp.get("slide_images", []) if Path(p).exists()]
 
+    def _cleanup(self, preserve: Path | None = None):
+        """清理中间文件，保留最终输出、演讲稿和封面"""
+        import shutil
+        preserve_paths = {str(preserve)} if preserve else set()
+        # 保留的文件
+        preserve_paths.update({
+            str(self.output_dir / "script.txt"),
+            str(self.output_dir / "parsed_slides.json"),
+            str(self.output_dir / "parsed_slides.md"),
+            str(self.output_dir / "cover.png"),
+            str(self.output_dir / "checkpoint.json"),
+        })
+        for subdir in ("video", "pip", "subtitle", "audio"):
+            d = self.output_dir / subdir
+            if d.exists():
+                shutil.rmtree(d, ignore_errors=True)
+                print(f"  清理: {d.name}/")
+        # 清理 BGM 中间文件
+        for f in self.output_dir.glob("*_wm.mp4"):
+            if str(f) not in preserve_paths:
+                f.unlink(missing_ok=True)
+
     def run(
         self,
         ppt_path: str | Path,
@@ -116,6 +138,7 @@ class DigitalHumanPipeline:
         parallel: bool = False,
         use_cache: bool = True,
         resume: bool = False,
+        cleanup: bool = False,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> Path:
         """
@@ -289,10 +312,12 @@ class DigitalHumanPipeline:
 
         # Step 4.5: 画中画合成
         if layout == "pip" and self.slide_images:
-            _progress("  合成画中画...", 0.88)
+            pip_label = "并行画中画" if parallel else "画中画"
+            _progress(f"  合成{pip_label}...", 0.88)
             pip_dir = self.output_dir / "pip"
             self.video_results = composite_pages(
-                self.slide_images, self.video_results, pip_dir, resolution=resolution
+                self.slide_images, self.video_results, pip_dir,
+                resolution=resolution, parallel=parallel,
             )
 
         # Step 4.6: 字幕叠加
@@ -345,6 +370,11 @@ class DigitalHumanPipeline:
                         generate_cover(final_path, self.output_dir / "cover.png")
                 except Exception as e:
                     _progress(f"  封面生成跳过: {e}", 0.99)
+
+            # Step 8: 清理中间文件
+            if cleanup:
+                _progress("  清理中间文件...", 1.0)
+                self._cleanup(preserve=final_path)
 
             elapsed = time.time() - start
             _progress(f"完成! 总耗时 {elapsed:.0f}s", 1.0)
@@ -409,6 +439,8 @@ def main():
                         help="禁用 TTS 缓存")
     parser.add_argument("--resume", action="store_true",
                         help="从上次失败的步骤继续")
+    parser.add_argument("--cleanup", action="store_true",
+                        help="完成后清理中间文件（video/pip/subtitle/audio 目录）")
 
     args = parser.parse_args()
 
@@ -436,8 +468,5 @@ def main():
         parallel=args.parallel,
         use_cache=not args.no_cache,
         resume=args.resume,
+        cleanup=args.cleanup,
     )
-
-
-if __name__ == "__main__":
-    main()

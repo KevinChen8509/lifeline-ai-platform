@@ -2,6 +2,7 @@
 
 import subprocess
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 # 分辨率预设
 RESOLUTION_PRESETS = {
@@ -88,26 +89,39 @@ def composite_pages(
     page_videos: dict[int, Path],
     output_dir: str | Path,
     resolution: str = "720p",
+    parallel: bool = False,
+    max_workers: int = 3,
 ) -> dict[int, Path]:
     """
     批量合成每页视频的画中画版本
+
+    Args:
+        parallel: 是否并行合成（IO 密集，推荐开启）
+        max_workers: 并行线程数
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    results = {}
-    for page_num in sorted(page_videos.keys()):
-        if page_num < len(slide_images):
-            slide_img = slide_images[page_num]
-        else:
-            slide_img = slide_images[-1]
-
+    def _composite_one(item):
+        page_num, video_path = item
+        slide_img = slide_images[page_num] if page_num < len(slide_images) else slide_images[-1]
         out = output_dir / f"pip_page_{page_num:03d}.mp4"
-        results[page_num] = composite_pip(
+        return page_num, composite_pip(
             ppt_image=slide_img,
-            avatar_video=page_videos[page_num],
+            avatar_video=video_path,
             output_path=out,
             resolution=resolution,
         )
 
+    if parallel and len(page_videos) > 1:
+        results = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for pn, path in pool.map(_composite_one, sorted(page_videos.items())):
+                results[pn] = path
+        return results
+
+    results = {}
+    for page_num in sorted(page_videos.keys()):
+        pn, path = _composite_one((page_num, page_videos[page_num]))
+        results[pn] = path
     return results

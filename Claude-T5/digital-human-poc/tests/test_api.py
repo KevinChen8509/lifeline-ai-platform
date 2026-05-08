@@ -62,3 +62,26 @@ def test_resolution_presets():
     assert _get_resolution("640x480") == (640, 480)
     # 无效格式回退到 720p
     assert _get_resolution("invalid") == (1280, 720)
+
+
+def test_api_has_websocket_import():
+    """测试 WebSocket 相关导入"""
+    from api import _ws_broadcast, _ws_clients, _ws_lock
+    assert isinstance(_ws_clients, dict)
+    assert _ws_lock is not None
+
+
+def test_api_avatar_endpoints():
+    """测试头像端点导入"""
+    from api import list_avatars
+    result = list_avatars()
+    assert "total" in result
+    assert result["total"] > 0
+
+
+def test_api_health_has_avatars():
+    """测试健康检查包含头像数"""
+    from api import health_check
+    result = health_check()
+    assert "avatars" in result
+    assert result["avatars"] > 0

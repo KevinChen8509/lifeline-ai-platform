@@ -3,8 +3,11 @@
 
 启动: python api.py
 文档: http://localhost:8000/docs
+WebSocket: ws://localhost:8000/ws/progress/{job_id}
 """
 
+import asyncio
+import json
 import os
 import sys
 import time
@@ -16,7 +19,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).parent))
 
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
@@ -56,6 +59,10 @@ _jobs: dict[str, dict] = {}
 _job_lock = threading.Lock()
 _start_time = time.time()
 
+# WebSocket 进度推送: {job_id: [set of active websockets]}
+_ws_clients: dict[str, set] = {}
+_ws_lock = threading.Lock()
+
 
 # ============ 数据模型 ============
 
@@ -83,6 +90,13 @@ def _run_pipeline_job(job_id: str, ppt_path: Path, params: dict):
         with _job_lock:
             _jobs[job_id]["progress"] = pct
             _jobs[job_id]["message"] = msg
+        # WebSocket 广播
+        _ws_broadcast(job_id, {
+            "job_id": job_id,
+            "status": "running",
+            "progress": pct,
+            "message": msg,
+        })
 
     try:
         pipeline = DigitalHumanPipeline()
@@ -96,10 +110,34 @@ def _run_pipeline_job(job_id: str, ppt_path: Path, params: dict):
             _jobs[job_id]["progress"] = 1.0
             _jobs[job_id]["message"] = "完成"
             _jobs[job_id]["output_path"] = str(result)
+        _ws_broadcast(job_id, {
+            "job_id": job_id,
+            "status": "completed",
+            "progress": 1.0,
+            "message": "完成",
+            "output_path": str(result),
+        })
     except Exception as e:
         with _job_lock:
             _jobs[job_id]["status"] = "failed"
             _jobs[job_id]["error"] = str(e)
+        _ws_broadcast(job_id, {
+            "job_id": job_id,
+            "status": "failed",
+            "error": str(e),
+        })
+
+
+def _ws_broadcast(job_id: str, data: dict):
+    """向所有监听该任务的 WebSocket 客户端广播消息"""
+    with _ws_lock:
+        clients = _ws_clients.get(job_id, set()).copy()
+    msg = json.dumps(data, ensure_ascii=False)
+    for ws in clients:
+        try:
+            asyncio.run_coroutine_threadsafe(ws.send_text(msg), asyncio.get_event_loop())
+        except Exception:
+            pass
 
 
 # ============ API 端点 ============
@@ -271,6 +309,72 @@ def delete_job(job_id: str, _: bool = Depends(verify_api_key)):
             raise HTTPException(404, f"任务不存在: {job_id}")
         del _jobs[job_id]
     return {"ok": True}
+
+
+# ============ WebSocket 实时进度 ============
+
+@app.websocket("/ws/progress/{job_id}")
+async def ws_progress(websocket: WebSocket, job_id: str):
+    """
+    WebSocket 实时进度推送
+
+    连接: ws://localhost:8000/ws/progress/{job_id}
+
+    服务端推送消息格式:
+    {
+        "job_id": "xxx",
+        "status": "running" | "completed" | "failed",
+        "progress": 0.0~1.0,
+        "message": "当前步骤描述",
+        "output_path": "..." | null,   // 仅 completed
+        "error": "..." | null          // 仅 failed
+    }
+    """
+    await websocket.accept()
+
+    # 检查任务是否存在
+    with _job_lock:
+        if job_id not in _jobs:
+            await websocket.send_text(json.dumps({"error": f"任务不存在: {job_id}"}))
+            await websocket.close()
+            return
+
+    # 注册客户端
+    with _ws_lock:
+        if job_id not in _ws_clients:
+            _ws_clients[job_id] = set()
+        _ws_clients[job_id].add(websocket)
+
+    try:
+        # 先发送当前状态
+        with _job_lock:
+            current = _jobs.get(job_id, {})
+        await websocket.send_text(json.dumps({
+            "job_id": job_id,
+            "status": current.get("status", "pending"),
+            "progress": current.get("progress", 0.0),
+            "message": current.get("message", ""),
+            "output_path": current.get("output_path"),
+            "error": current.get("error"),
+        }, ensure_ascii=False))
+
+        # 保持连接，等待任务完成
+        while True:
+            with _job_lock:
+                job = _jobs.get(job_id, {})
+                status = job.get("status", "pending")
+            if status in ("completed", "failed"):
+                break
+            await asyncio.sleep(0.5)
+
+    except WebSocketDisconnect:
+        pass
+    finally:
+        with _ws_lock:
+            if job_id in _ws_clients:
+                _ws_clients[job_id].discard(websocket)
+                if not _ws_clients[job_id]:
+                    del _ws_clients[job_id]
 
 
 if __name__ == "__main__":
