@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.pipeline import DigitalHumanPipeline
+from src.avatar.gallery import scan_avatars, get_avatar_path
 
 
 def main():
@@ -29,6 +30,10 @@ def main():
     parser.add_argument("--skip-avatar", action="store_true",
                         help="仅生成音频")
     parser.add_argument("--avatar", default=None, help="头像图片路径")
+    parser.add_argument("--avatar-id", default=None,
+                        help="头像 ID（使用 --list-avatars 查看可用 ID）")
+    parser.add_argument("--list-avatars", action="store_true",
+                        help="列出所有可用头像并退出")
     parser.add_argument("--layout", default="pip",
                         choices=["pip", "avatar-only"],
                         help="视频布局 (pip=画中画, avatar-only=仅数字人)")
@@ -70,6 +75,24 @@ def main():
                         help="批量处理: 指定目录，处理其中所有 .pptx 文件")
     args = parser.parse_args()
 
+    # 列出头像
+    if args.list_avatars:
+        avatars = scan_avatars()
+        if not avatars:
+            print("没有找到可用头像")
+        else:
+            print(f"可用头像 ({len(avatars)} 个):\n")
+            print(f"  {'ID':<20} {'名称':<10} {'性别':<6} {'风格':<10}")
+            print("  " + "-" * 50)
+            for a in avatars:
+                print(f"  {a.id:<20} {a.name:<10} {a.gender:<6} {a.style:<10}")
+        return
+
+    # 解析头像: --avatar-id 优先, 其次 --avatar
+    avatar_image = args.avatar
+    if args.avatar_id and not args.avatar:
+        avatar_image = get_avatar_path(args.avatar_id)
+
     # 批量模式
     if args.batch:
         batch_dir = Path(args.batch)
@@ -89,7 +112,7 @@ def main():
             pipeline.run(
                 ppt_path=ppt,
                 style=args.style,
-                avatar_image=args.avatar,
+                avatar_image=avatar_image,
                 use_fallback=args.fallback,
                 skip_avatar=args.skip_avatar,
                 layout=args.layout,

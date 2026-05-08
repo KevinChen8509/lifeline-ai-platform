@@ -26,6 +26,7 @@ from src.avatar.sadtalker_driver import (
 )
 from src.avatar.fallback_driver import generate_fallback_video
 from src.avatar.compositor import composite_pages, _get_resolution
+from src.avatar.gallery import scan_avatars, get_avatar_path, AvatarInfo
 from src.avatar.bgm import mix_bgm
 from src.avatar.merger import merge_videos, TRANSITION_CHOICES
 from src.avatar.watermark import add_text_watermark, add_image_watermark
@@ -80,10 +81,22 @@ RESOLUTION_MAP = {
     "4K (3840x2160)": "4K",
 }
 
-AVATAR_CHOICES = {
-    "默认头像 (art_0)": "SadTalker/examples/source_image/art_0.png",
-    "自定义上传": None,
-}
+AVATAR_CHOICES = {}
+AVATAR_IMAGES = []  # Gallery 缩略图路径列表
+
+
+def _init_avatar_choices():
+    """初始化头像选项（延迟加载）"""
+    global AVATAR_CHOICES, AVATAR_IMAGES
+    avatars = scan_avatars()
+    AVATAR_CHOICES = {"自定义上传": None}
+    AVATAR_IMAGES = []
+    for a in avatars:
+        AVATAR_CHOICES[a.display_name] = a.id
+        AVATAR_IMAGES.append(a.path)
+
+
+_init_avatar_choices()
 
 
 def _merge_audios(audio_paths: list[str], output_path: str) -> str:
@@ -161,8 +174,11 @@ def generate(
     # 头像
     if avatar_choice == "自定义上传" and avatar_upload is not None:
         avatar_path = avatar_upload
+    elif avatar_choice == "自定义上传":
+        avatar_path = AVATAR_SOURCE_IMAGE  # 未上传则用默认
     else:
-        avatar_path = AVATAR_CHOICES.get(avatar_choice, AVATAR_SOURCE_IMAGE)
+        avatar_id = AVATAR_CHOICES.get(avatar_choice)
+        avatar_path = get_avatar_path(avatar_id)
 
     ppt_path = Path(ppt_file)
     output_dir = OUTPUT_DIR / f"web_{ppt_path.stem}_{int(start)}"
@@ -713,10 +729,22 @@ def build_ui():
                     label="语速",
                 )
 
+                avatar_gallery = gr.Gallery(
+                    value=AVATAR_IMAGES,
+                    label="选择头像（点击选中）",
+                    show_label=True,
+                    columns=5,
+                    rows=2,
+                    height="auto",
+                    allow_preview=True,
+                    selected_index=0,
+                )
+
                 avatar_radio = gr.Radio(
                     choices=list(AVATAR_CHOICES.keys()),
-                    value="默认头像 (art_0)",
+                    value=list(AVATAR_CHOICES.keys())[0] if len(AVATAR_CHOICES) > 1 else "自定义上传",
                     label="头像",
+                    visible=False,  # 隐藏，由 Gallery 驱动
                 )
 
                 avatar_file = gr.File(
@@ -726,13 +754,45 @@ def build_ui():
                     visible=False,
                 )
 
+                avatar_name_display = gr.Markdown(
+                    f"当前: **{list(AVATAR_CHOICES.keys())[0]}**"
+                    if len(AVATAR_CHOICES) > 1 else "当前: **默认头像**"
+                )
+
+                def on_gallery_select(evt: gr.SelectData):
+                    """Gallery 点击事件: 选中头像并更新显示"""
+                    avatars = scan_avatars()
+                    if 0 <= evt.index < len(avatars):
+                        a = avatars[evt.index]
+                        return (
+                            gr.update(value=a.display_name),
+                            f"当前: **{a.display_name}**",
+                            gr.update(visible=False),
+                        )
+                    return gr.update(), gr.update(), gr.update(visible=False)
+
                 def toggle_avatar(choice):
                     return gr.update(visible=choice == "自定义上传")
 
-                avatar_radio.change(
-                    fn=toggle_avatar,
-                    inputs=avatar_radio,
-                    outputs=avatar_file,
+                avatar_gallery.select(
+                    fn=on_gallery_select,
+                    inputs=None,
+                    outputs=[avatar_radio, avatar_name_display, avatar_file],
+                )
+
+                # 自定义上传按钮
+                upload_avatar_btn = gr.Button("上传自定义头像", size="sm")
+                upload_avatar_btn.click(
+                    fn=lambda: (gr.update(value="自定义上传"), gr.update(visible=True)),
+                    inputs=None,
+                    outputs=[avatar_radio, avatar_file],
+                )
+
+                avatar_file.change(
+                    fn=lambda f: (gr.update(value="自定义上传"),
+                                  f"当前: **自定义上传**" if f else "当前: **默认头像**"),
+                    inputs=avatar_file,
+                    outputs=[avatar_radio, avatar_name_display],
                 )
 
                 mode_choices = ["快速模式 (静态图片)"]

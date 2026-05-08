@@ -25,6 +25,7 @@ from src.config import OUTPUT_DIR
 from src.pipeline import DigitalHumanPipeline
 from src.avatar.compositor import RESOLUTION_PRESETS
 from src.avatar.merger import TRANSITION_CHOICES
+from src.avatar.gallery import scan_avatars, get_avatar_path, AvatarInfo
 from src.tts.engine import EMOTION_PRESETS
 
 app = FastAPI(
@@ -121,12 +122,33 @@ def health_check():
         "ffmpeg": "ok" if ffmpeg_ok else "missing",
         "auth_enabled": _auth_enabled,
         "jobs_running": running,
+        "avatars": len(scan_avatars()),
     }
+
+
+@app.get("/avatars")
+def list_avatars(_: bool = Depends(verify_api_key)):
+    """列出所有可用头像"""
+    avatars = scan_avatars()
+    return {
+        "total": len(avatars),
+        "avatars": [a.__dict__ for a in avatars],
+    }
+
+
+@app.get("/avatars/{avatar_id}/image")
+def get_avatar_image(avatar_id: str, _: bool = Depends(verify_api_key)):
+    """获取头像图片"""
+    path = Path(get_avatar_path(avatar_id))
+    if not path.exists():
+        raise HTTPException(404, f"头像不存在: {avatar_id}")
+    return FileResponse(path, media_type="image/png", filename=path.name)
 
 
 @app.get("/options")
 def get_options(_: bool = Depends(verify_api_key)):
     """获取所有可选项"""
+    avatars = scan_avatars()
     return {
         "styles": ["formal", "casual", "training"],
         "emotions": {k: v["desc"] for k, v in EMOTION_PRESETS.items()},
@@ -134,6 +156,8 @@ def get_options(_: bool = Depends(verify_api_key)):
         "resolutions": {k: f"{w}x{h}" for k, (w, h) in RESOLUTION_PRESETS.items()},
         "layouts": ["pip", "avatar-only"],
         "languages": ["auto", "zh", "en"],
+        "avatars": [{"id": a.id, "name": a.name, "gender": a.gender,
+                      "style": a.style, "builtin": a.builtin} for a in avatars],
     }
 
 
@@ -153,6 +177,7 @@ async def generate(
     use_fallback: bool = Form(True),
     parallel: bool = Form(False),
     watermark_text: Optional[str] = Form(None),
+    avatar_id: Optional[str] = Form(None, description="头像 ID（从 /options 获取，空=默认头像）"),
     auth: bool = Depends(verify_api_key),
 ):
     """提交生成任务（异步）"""
@@ -191,6 +216,7 @@ async def generate(
         "watermark_text": watermark_text,
         "generate_cover_image": True,
         "use_cache": True,
+        "avatar_image": get_avatar_path(avatar_id),
     }
 
     # 后台执行

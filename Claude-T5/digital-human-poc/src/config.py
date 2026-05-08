@@ -30,6 +30,7 @@ TTS_RATE = os.getenv("TTS_RATE", "+0%")  # 语速调整
 # ============ 数字人配置 ============
 AVATAR_ENGINE = os.getenv("AVATAR_ENGINE", "sadtalker")  # sadtalker | musetalk
 AVATAR_SOURCE_IMAGE = os.getenv("AVATAR_SOURCE_IMAGE", str(TEMPLATES_DIR / "default_avatar.png"))
+AVATAR_ID = os.getenv("AVATAR_ID", "")  # 头像 ID（空=使用默认头像）
 AVATAR_PREPROCESSOR = os.getenv("AVATAR_PREPROCESSOR", "crop")  # crop | resize | full
 AVATAR_STILL = os.getenv("AVATAR_STILL", "true")
 

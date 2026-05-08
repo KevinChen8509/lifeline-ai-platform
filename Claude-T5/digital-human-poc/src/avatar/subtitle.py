@@ -30,7 +30,7 @@ def _split_sentences(text: str, max_chars: int = 24) -> list[str]:
 def _generate_srt(
     sentences: list[str],
     total_duration: float,
-    output_path: str | Path,
+    output_path: str | Path,    
 ) -> Path:
     """
     生成 SRT 字幕文件，句子按时间均匀分配。
