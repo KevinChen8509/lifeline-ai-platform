@@ -23,10 +23,13 @@
 | 断点续传 | 生成失败后从上次进度继续 |
 | 批量处理 | 同时上传多个 PPT，队列式生成 |
 | 历史记录 | 自动记录生成历史，可回看 |
+| 多数字人 | 10 个内置头像 + 自定义上传，可视化选择 |
 | Web UI | Gradio 浏览器界面，实时流式进度显示 |
 | REST API | FastAPI 异步接口，支持外部集成 |
+| WebSocket | 实时进度推送，替代轮询 |
 | API 认证 | X-API-Key 保护，健康检查端点 |
 | 素材导出 | 演讲稿、单页音频、SRT 字幕、视频一键下载 |
+| Docker 部署 | Dockerfile + docker-compose 一键启动 |
 
 ## 快速开始
 
@@ -82,6 +85,24 @@ python api.py
 python demo.py --fallback
 ```
 
+### 6. Docker 部署 (可选)
+
+```bash
+# 构建并启动 Web UI + API
+docker compose up --build
+
+# 仅启动 API
+docker compose up api
+
+# 仅启动 Web UI
+docker compose up web
+
+# 后台运行
+docker compose up -d
+```
+
+访问: Web UI http://localhost:7860 | API http://localhost:8000/docs
+
 ## Web UI 使用
 
 ```bash
@@ -132,11 +153,14 @@ python api.py
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/` | API 信息 |
-| GET | `/health` | 健康检查 |
+| GET | `/health` | 健康检查（含 FFmpeg 状态、头像数量） |
 | GET | `/options` | 获取所有可选项 |
+| GET | `/avatars` | 列出所有可用头像 |
+| GET | `/avatars/{id}/image` | 获取头像图片 |
 | POST | `/generate` | 提交生成任务（异步） |
 | GET | `/jobs` | 列出所有任务 |
 | GET | `/jobs/{id}` | 查询任务状态 |
+| WS | `/ws/progress/{id}` | WebSocket 实时进度推送 |
 | GET | `/download/{id}` | 下载生成结果 |
 | DELETE | `/jobs/{id}` | 删除任务 |
 
@@ -220,6 +244,9 @@ python demo.py --batch ./presentations/ --fallback
 | `--no-subtitles` | - | 禁用字幕叠加 |
 | `--no-bgm` | - | 禁用背景音乐 |
 | `--batch` | - | 批量处理：指定目录处理所有 .pptx |
+| `--avatar-id` | 默认头像 | 头像 ID（`--list-avatars` 查看） |
+| `--list-avatars` | - | 列出所有可用头像 |
+| `--cleanup` | - | 完成后清理中间文件 |
 
 ## 项目结构
 
@@ -230,7 +257,7 @@ digital-human-poc/
 ├── demo.py                     # CLI 快速演示入口
 ├── src/
 │   ├── config.py               # 全局配置
-│   ├── pipeline.py             # 主流水线（串联所有模块，含断点续传）
+│   ├── pipeline.py             # 主流水线（串联所有模块，含断点续传+清理）
 │   ├── history.py              # 生成历史记录
 │   ├── parsers/
 │   │   ├── ppt_parser.py       # PPT 解析：文本/表格/备注
@@ -244,13 +271,14 @@ digital-human-poc/
 │   └── avatar/
 │       ├── sadtalker_driver.py # SadTalker 面部动画驱动
 │       ├── fallback_driver.py  # FFmpeg 静态图片降级方案（含并行）
-│       ├── compositor.py       # 画中画合成（多分辨率）
+│       ├── gallery.py          # 多头像库（10 内置 + 自定义）
+│       ├── compositor.py       # 画中画合成（多分辨率+并行）
 │       ├── subtitle.py         # SRT 字幕生成与烧录
 │       ├── bgm.py              # 背景音乐混音
 │       ├── merger.py           # 视频合并（8 种转场效果）
 │       ├── watermark.py        # 文字/图片水印
 │       └── cover.py            # 视频封面生成
-├── tests/                      # 42 个单元测试
+├── tests/                      # 73 个单元测试
 ├── assets/
 │   └── bgm_default.wav         # 默认背景音乐
 ├── samples/
@@ -258,7 +286,10 @@ digital-human-poc/
 ├── templates/
 │   └── default_avatar.png      # 默认头像
 ├── .env.example                # 环境变量模板
-└── requirements.txt            # Python 依赖
+├── requirements.txt            # Python 依赖
+├── Dockerfile                  # Docker 镜像（CPU/GPU 双模式）
+├── docker-compose.yml          # Docker Compose 一键部署
+└── .dockerignore               # Docker 构建排除文件
 ```
 
 ## 处理流水线

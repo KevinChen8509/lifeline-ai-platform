@@ -1,0 +1,40 @@
+# 数字人汇报系统 - Docker Compose
+#
+# 启动: docker compose up --build
+# 停止: docker compose down
+#
+# 仅 API:   docker compose up api
+# 仅 Web:   docker compose up web
+
+services:
+  # ---- Web UI (Gradio) ----
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./outputs:/app/outputs
+      - ./templates:/app/templates
+      - ./.env:/app/.env:ro
+    environment:
+      - AVATAR_ENGINE=fallback
+    command: python -u web.py
+    restart: unless-stopped
+
+  # ---- REST API (FastAPI) ----
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./outputs:/app/outputs
+      - ./templates:/app/templates
+      - ./.env:/app/.env:ro
+    environment:
+      - AVATAR_ENGINE=fallback
+    command: python -u api.py
+    restart: unless-stopped
