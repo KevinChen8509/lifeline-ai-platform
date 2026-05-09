@@ -38,6 +38,33 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# ============ 限流中间件 ============
+_RATE_LIMIT = int(os.getenv("RATE_LIMIT", "0"))  # 每分钟最大请求数，0=不限
+_rate_store: dict[str, list[float]] = {}
+_rate_lock = threading.Lock()
+
+
+@app.middleware("http")
+async def rate_limit_middleware(request, call_next):
+    """IP 级别限流中间件"""
+    if _RATE_LIMIT <= 0:
+        return await call_next(request)
+    client = request.client.host if request.client else "unknown"
+    now = time.time()
+    with _rate_lock:
+        if client not in _rate_store:
+            _rate_store[client] = []
+        # 清理 60s 前的记录
+        _rate_store[client] = [t for t in _rate_store[client] if now - t < 60]
+        if len(_rate_store[client]) >= _RATE_LIMIT:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": f"请求过于频繁，限制 {_RATE_LIMIT} 次/分钟"},
+            )
+        _rate_store[client].append(now)
+    return await call_next(request)
+
+
 # ============ API Key 认证 ============
 _api_keys_str = os.getenv("API_KEYS", "")
 _valid_keys = set(k.strip() for k in _api_keys_str.split(",") if k.strip()) if _api_keys_str else set()
@@ -218,7 +245,9 @@ async def generate(
     parallel: bool = Form(False),
     watermark_text: Optional[str] = Form(None),
     avatar_id: Optional[str] = Form(None, description="头像 ID（从 /options 获取，空=默认头像）"),
-    virtual_background: Optional[str] = Form(None, description="虚拟背景: 图片路径或预设名（纯白/浅灰/深蓝渐变/暖灰渐变/深色商务）"),
+    virtual_background: Optional[str] = Form(None, description="虚拟背景: 图片路径或预设名"),
+    trim_start: float = Form(0.0, description="裁剪: 跳过前 N 秒"),
+    trim_end: Optional[float] = Form(None, description="裁剪: 在第 N 秒截断"),
     auth: bool = Depends(verify_api_key),
 ):
     """提交生成任务（异步）"""
@@ -259,6 +288,8 @@ async def generate(
         "use_cache": True,
         "avatar_image": get_avatar_path(avatar_id),
         "virtual_background": virtual_background,
+        "trim_start": trim_start,
+        "trim_end": trim_end,
     }
 
     # 后台执行

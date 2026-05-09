@@ -170,3 +170,46 @@ def _merge_xfade(
         return _merge_concat(video_paths, output_path)
 
     return output_path
+
+
+def trim_video(
+    input_path: str | Path,
+    output_path: str | Path,
+    start: float = 0.0,
+    end: float | None = None,
+) -> Path:
+    """
+    裁剪视频（掐头去尾）
+
+    Args:
+        input_path: 输入视频路径
+        output_path: 输出视频路径
+        start: 开始时间（秒），默认从头开始
+        end: 结束时间（秒），None=到视频结尾
+
+    Returns:
+        裁剪后的视频路径
+    """
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cmd = ["ffmpeg", "-y", "-i", str(input_path)]
+
+    if start > 0:
+        cmd.extend(["-ss", str(start)])
+    if end is not None:
+        cmd.extend(["-to", str(end)])
+
+    cmd.extend([
+        "-c:v", "libx264", "-c:a", "aac",
+        "-pix_fmt", "yuv420p",
+        str(output_path),
+    ])
+
+    log.info("裁剪视频: %s (%.1fs ~ %s)", input_path.name, start,
+             f"{end:.1f}s" if end else "结尾")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"视频裁剪失败:\n{result.stderr}")
+    return output_path

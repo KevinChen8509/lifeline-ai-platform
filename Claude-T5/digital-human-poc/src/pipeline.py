@@ -20,7 +20,7 @@ from src.avatar.fallback_driver import generate_fallback_video, generate_fallbac
 from src.avatar.compositor import composite_pages, RESOLUTION_PRESETS
 from src.avatar.subtitle import add_subtitles_to_pages
 from src.avatar.bgm import mix_bgm
-from src.avatar.merger import merge_videos
+from src.avatar.merger import merge_videos, trim_video
 from src.avatar.watermark import add_text_watermark, add_image_watermark
 from src.avatar.cover import generate_cover, generate_slideshow_cover
 from src.avatar.virtual_background import apply_background_to_pages
@@ -144,6 +144,8 @@ class DigitalHumanPipeline:
         resume: bool = False,
         cleanup: bool = False,
         virtual_background: str | None = None,
+        trim_start: float = 0.0,
+        trim_end: float | None = None,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> Path:
         """
@@ -373,6 +375,12 @@ class DigitalHumanPipeline:
                 wm_path = self.output_dir / f"{stem}_wm.mp4"
                 final_path = add_image_watermark(final_path, image_path=watermark_image, output_path=wm_path)
 
+            # Step 6.5: 视频裁剪
+            if trim_start > 0 or trim_end is not None:
+                _progress("裁剪视频...", 0.985)
+                trim_path = self.output_dir / f"{stem}_trim.mp4"
+                final_path = trim_video(final_path, trim_path, start=trim_start, end=trim_end)
+
             # Step 7: 封面
             if generate_cover_image:
                 _progress("生成封面...", 0.99)
@@ -456,6 +464,10 @@ def main():
                         help="完成后清理中间文件（video/pip/subtitle/audio 目录）")
     parser.add_argument("--virtual-bg", default=None,
                         help="虚拟背景: 图片路径或预设名（纯白/浅灰/深蓝渐变/暖灰渐变/深色商务）")
+    parser.add_argument("--trim-start", type=float, default=0.0,
+                        help="裁剪: 跳过前 N 秒")
+    parser.add_argument("--trim-end", type=float, default=None,
+                        help="裁剪: 在第 N 秒截断")
 
     args = parser.parse_args()
 
@@ -485,4 +497,6 @@ def main():
         resume=args.resume,
         cleanup=args.cleanup,
         virtual_background=args.virtual_bg,
+        trim_start=args.trim_start,
+        trim_end=args.trim_end,
     )
