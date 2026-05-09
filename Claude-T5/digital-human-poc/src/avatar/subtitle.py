@@ -115,7 +115,7 @@ def burn_subtitles(
         str(output_path),
     ]
 
-    log.info("  烧录字幕: {video_path.name}")
+    log.info("  烧录字幕: %s", video_path.name)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         # 如果 subtitles 滤镜失败（可能编译时不支持 libass），

@@ -93,7 +93,7 @@ def add_text_watermark(
     # 在输出目录中执行，让字体相对路径生效
     cwd = str(output_path.parent)
 
-    log.info("  添加文字水印: \"{text}\" -> {output_path.name}")
+    log.info("  添加文字水印: \"%s\" -> %s", text, output_path.name)
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if result.returncode != 0:
         raise RuntimeError(f"水印添加失败:\n{result.stderr}")
@@ -154,7 +154,7 @@ def add_image_watermark(
         str(output_path),
     ]
 
-    log.info("  添加图片水印: {image_path.name} -> {output_path.name}")
+    log.info("  添加图片水印: %s -> %s", image_path.name, output_path.name)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"图片水印添加失败:\n{result.stderr}")

@@ -87,7 +87,7 @@ def _merge_concat(video_paths: list[Path], output_path: Path) -> Path:
         "-c", "copy",
         str(output_path),
     ]
-    log.info("  合并 {len(video_paths)} 段视频 -> {output_path.name}")
+    log.info("  合并 %d 段视频 -> %s", len(video_paths), output_path.name)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"视频合并失败:\n{result.stderr}")
@@ -162,7 +162,7 @@ def _merge_xfade(
         str(output_path),
     ]
 
-    log.info("  合并 {n} 段视频 (转场: {transition}, {td}s) -> {output_path.name}")
+    log.info("  合并 %d 段视频 (转场: %s, %ss) -> %s", n, transition, td, output_path.name)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         # xfade 失败时降级为 concat

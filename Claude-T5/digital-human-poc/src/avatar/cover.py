@@ -40,7 +40,7 @@ def generate_cover(
         str(output_path),
     ]
 
-    log.info("  生成封面: {output_path.name} (offset={time_offset}s)")
+    log.info("  生成封面: %s (offset=%ss)", output_path.name, time_offset)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"封面生成失败:\n{result.stderr}")
@@ -80,7 +80,7 @@ def generate_slideshow_cover(
         str(output_path),
     ]
 
-    log.info("  生成幻灯片封面: {output_path.name}")
+    log.info("  生成幻灯片封面: %s", output_path.name)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"封面生成失败:\n{result.stderr}")

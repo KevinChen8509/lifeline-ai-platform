@@ -112,7 +112,7 @@ class DigitalHumanPipeline:
             d = self.output_dir / subdir
             if d.exists():
                 shutil.rmtree(d, ignore_errors=True)
-                log.info("  清理: {d.name}/")
+                log.info("  清理: %s/", d.name)
         # 清理 BGM 中间文件
         for f in self.output_dir.glob("*_wm.mp4"):
             if str(f) not in preserve_paths:

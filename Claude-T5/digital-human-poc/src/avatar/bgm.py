@@ -41,7 +41,7 @@ def mix_bgm(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not bgm_path.exists():
-        log.warning("警告: BGM 文件不存在 {bgm_path}，跳过混音")
+        log.warning("警告: BGM 文件不存在 %s，跳过混音", bgm_path)
         return video_path
 
     # FFmpeg amix 滤镜:
@@ -68,7 +68,7 @@ def mix_bgm(
         str(output_path),
     ]
 
-    log.info("  混合背景音乐: {video_path.name}")
+    log.info("  混合背景音乐: %s", video_path.name)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         log.warning("警告: BGM 混音失败，使用原视频")

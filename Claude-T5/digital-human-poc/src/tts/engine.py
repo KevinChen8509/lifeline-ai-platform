@@ -111,7 +111,7 @@ async def _synthesize(
             import shutil
             shutil.copy2(cache_file, output_path)
             duration = _get_audio_duration(output_path)
-            log.info("  [缓存命中] {output_path.name}")
+            log.info("  [缓存命中] %s", output_path.name)
             return TTSResult(
                 audio_path=str(output_path),
                 duration_seconds=duration,
@@ -218,7 +218,7 @@ def synthesize_pages(
         results = {}
         for page_num, text in pages.items():
             out_path = output_dir / f"page_{page_num:03d}.mp3"
-            log.info("  合成第 {page_num} 页语音 -> {out_path.name}")
+            log.info("  合成第 %s 页语音 -> %s", page_num, out_path.name)
             results[page_num] = synthesize_speech(
                 text, out_path, rate=rate, pitch=pitch, volume=volume, use_cache=use_cache
             )
@@ -228,7 +228,7 @@ def synthesize_pages(
     def _syn_one(item):
         page_num, text = item
         out_path = output_dir / f"page_{page_num:03d}.mp3"
-        log.info("  合成第 {page_num} 页语音 -> {out_path.name}")
+        log.info("  合成第 %s 页语音 -> %s", page_num, out_path.name)
         return page_num, synthesize_speech(
             text, out_path, rate=rate, pitch=pitch, volume=volume, use_cache=use_cache
         )
@@ -279,8 +279,8 @@ if __name__ == "__main__":
         log.info("可用中文语音：")
         voices = asyncio.run(list_voices("zh"))
         for v in voices:
-            log.info("  {v['ShortName']}: {v['FriendlyName']}")
+            log.info("  %s: %s", v['ShortName'], v['FriendlyName'])
     else:
         demo = "大家好，欢迎来到今天的汇报。接下来我将为大家介绍本次项目的核心内容。"
         result = synthesize_speech(demo)
-        log.info("合成完成: {result.audio_path} (约 {result.duration_seconds:.1f}s)")
+        log.info("合成完成: %s (约 %.1fs)", result.audio_path, result.duration_seconds)

@@ -67,8 +67,9 @@ def composite_pip(
         (
             f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,"
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,format=yuv420p[bg];"
-            f"[1:v]scale={avatar_size}:-1,format=yuv420p[fg];"
-            f"[bg][fg]overlay=W-w-{margin}:H-h-{margin}"
+            f"[1:v]scale={avatar_size}:-2,format=yuv420p[fg];"
+            f"[bg][fg]overlay=W-w-{margin}:H-h-{margin},"
+            f"scale=trunc(iw/2)*2:trunc(ih/2)*2"
         ),
         "-map", "1:a",
         "-c:v", "libx264",
@@ -79,7 +80,7 @@ def composite_pip(
         str(output_path),
     ]
 
-    log.info("  合成画中画 [{resolution}]: {ppt_image.name} + {avatar_video.name}")
+    log.info("  合成画中画 [%s]: %s + %s", resolution, ppt_image.name, avatar_video.name)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"画中画合成失败:\n{result.stderr}")
