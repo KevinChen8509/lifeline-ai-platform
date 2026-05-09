@@ -1,16 +1,14 @@
-"""测试历史记录模块"""
+"""测试历史记录模块（SQLite 版本）"""
 
-import json
 from pathlib import Path
 
 
 def test_add_and_load_history(tmp_path, monkeypatch):
     """测试添加和加载历史记录"""
-    from src.history import add_record, load_history, HISTORY_FILE
+    from src.history import add_record, load_history, DB_PATH
 
-    # 重定向历史文件到临时目录
-    test_file = tmp_path / "history.json"
-    monkeypatch.setattr("src.history.HISTORY_FILE", test_file)
+    db = tmp_path / "history.db"
+    monkeypatch.setattr("src.history.DB_PATH", db)
 
     record = add_record(
         ppt_name="test.pptx",
@@ -34,8 +32,8 @@ def test_format_history_md(tmp_path, monkeypatch):
     """测试历史 Markdown 格式化"""
     from src.history import add_record, format_history_md
 
-    test_file = tmp_path / "history.json"
-    monkeypatch.setattr("src.history.HISTORY_FILE", test_file)
+    db = tmp_path / "history.db"
+    monkeypatch.setattr("src.history.DB_PATH", db)
 
     # 空历史
     md = format_history_md()
@@ -54,8 +52,8 @@ def test_history_max_100(tmp_path, monkeypatch):
     """测试历史记录最多保留 100 条"""
     from src.history import add_record, load_history
 
-    test_file = tmp_path / "history.json"
-    monkeypatch.setattr("src.history.HISTORY_FILE", test_file)
+    db = tmp_path / "history.db"
+    monkeypatch.setattr("src.history.DB_PATH", db)
 
     for i in range(105):
         add_record(

@@ -85,3 +85,17 @@ def test_api_health_has_avatars():
     result = health_check()
     assert "avatars" in result
     assert result["avatars"] > 0
+
+
+def test_api_options_has_backgrounds():
+    """测试可选项包含虚拟背景"""
+    from api import get_options
+    result = get_options()
+    assert "virtual_backgrounds" in result
+    assert len(result["virtual_backgrounds"]) > 0
+
+
+def test_api_rate_limit_import():
+    """测试限流变量可导入"""
+    from api import _RATE_LIMIT, rate_limit_middleware
+    assert isinstance(_RATE_LIMIT, int)
