@@ -23,6 +23,7 @@ from src.avatar.bgm import mix_bgm
 from src.avatar.merger import merge_videos
 from src.avatar.watermark import add_text_watermark, add_image_watermark
 from src.avatar.cover import generate_cover, generate_slideshow_cover
+from src.avatar.virtual_background import apply_background_to_pages
 
 
 class DigitalHumanPipeline:
@@ -139,6 +140,7 @@ class DigitalHumanPipeline:
         use_cache: bool = True,
         resume: bool = False,
         cleanup: bool = False,
+        virtual_background: str | None = None,
         progress_callback: Callable[[str, float], None] | None = None,
     ) -> Path:
         """
@@ -310,6 +312,14 @@ class DigitalHumanPipeline:
                     self.video_results[page_num] = video_path
             self._save_checkpoint("video")
 
+        # Step 4.4: 虚拟背景
+        if virtual_background and self.video_results:
+            _progress("  应用虚拟背景...", 0.86)
+            bg_dir = self.output_dir / "vbg"
+            self.video_results = apply_background_to_pages(
+                self.video_results, bg_dir, background=virtual_background,
+            )
+
         # Step 4.5: 画中画合成
         if layout == "pip" and self.slide_images:
             pip_label = "并行画中画" if parallel else "画中画"
@@ -441,6 +451,8 @@ def main():
                         help="从上次失败的步骤继续")
     parser.add_argument("--cleanup", action="store_true",
                         help="完成后清理中间文件（video/pip/subtitle/audio 目录）")
+    parser.add_argument("--virtual-bg", default=None,
+                        help="虚拟背景: 图片路径或预设名（纯白/浅灰/深蓝渐变/暖灰渐变/深色商务）")
 
     args = parser.parse_args()
 
@@ -469,4 +481,5 @@ def main():
         use_cache=not args.no_cache,
         resume=args.resume,
         cleanup=args.cleanup,
+        virtual_background=args.virtual_bg,
     )

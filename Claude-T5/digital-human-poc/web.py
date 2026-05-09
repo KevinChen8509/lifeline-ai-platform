@@ -31,6 +31,7 @@ from src.avatar.bgm import mix_bgm
 from src.avatar.merger import merge_videos, TRANSITION_CHOICES
 from src.avatar.watermark import add_text_watermark, add_image_watermark
 from src.avatar.cover import generate_cover, generate_slideshow_cover
+from src.avatar.virtual_background import apply_background_to_pages, BUILTIN_BACKGROUNDS
 from src.history import add_record, format_history_md
 from src.detectors.language import detect_language, get_default_voice
 
@@ -80,6 +81,8 @@ RESOLUTION_MAP = {
     "480p (854x480)": "480p",
     "4K (3840x2160)": "4K",
 }
+
+VIRTUAL_BG_MAP = {k: v for k, v in BUILTIN_BACKGROUNDS.items()}
 
 AVATAR_CHOICES = {}
 AVATAR_IMAGES = []  # Gallery 缩略图路径列表
@@ -147,6 +150,8 @@ def generate(
     resolution_name: str,
     enable_parallel: bool,
     enable_cache: bool,
+    virtual_bg_name: str,
+    virtual_bg_image,
     progress=gr.Progress(),
 ):
     """核心处理函数 — 生成器，流式更新 UI"""
@@ -170,6 +175,13 @@ def generate(
     resolution = RESOLUTION_MAP.get(resolution_name, "720p")
     preset = EMOTION_PRESETS.get(emotion, EMOTION_PRESETS["default"])
     effective_rate = rate if rate != "+0%" else preset["rate"]
+
+    # 虚拟背景
+    virtual_bg = None
+    if virtual_bg_image is not None:
+        virtual_bg = virtual_bg_image  # 自定义背景图
+    else:
+        virtual_bg = VIRTUAL_BG_MAP.get(virtual_bg_name)
 
     # 头像
     if avatar_choice == "自定义上传" and avatar_upload is not None:
@@ -313,6 +325,14 @@ def generate(
     export_paths.extend(audio_paths)
     yield (script_display, merged_audio, str(videos[page_nums[-1]]),
            status(f"音频+视频完成: {total_pages} 页"), None)
+
+    # === Step 4.4: 虚拟背景 ===
+    if virtual_bg:
+        progress(0.87, desc="应用虚拟背景...")
+        vbg_dir = output_dir / "vbg"
+        videos = apply_background_to_pages(videos, vbg_dir, background=virtual_bg)
+        yield (script_display, merged_audio, str(videos[page_nums[-1]]),
+               status("虚拟背景应用完成"), None)
 
     # === Step 4.5: 画中画合成 ===
     if layout == "pip" and slide_images:
@@ -849,6 +869,18 @@ def build_ui():
                     type="filepath",
                 )
 
+                virtual_bg_dd = gr.Dropdown(
+                    choices=list(VIRTUAL_BG_MAP.keys()),
+                    value="无（保留原背景）",
+                    label="虚拟背景",
+                )
+
+                virtual_bg_file = gr.File(
+                    label="自定义虚拟背景图（覆盖上方选项）",
+                    file_types=["image"],
+                    type="filepath",
+                )
+
                 cover_cb = gr.Checkbox(
                     value=True,
                     label="生成封面图",
@@ -910,7 +942,8 @@ def build_ui():
                     avatar_radio, avatar_file, mode_radio, layout_dd,
                     subtitle_cb, bgm_cb, rate_dd, bgm_file, language_dd, emotion_dd,
                     transition_dd, wm_text, wm_image, cover_cb,
-                    resolution_dd, parallel_cb, cache_cb],
+                    resolution_dd, parallel_cb, cache_cb,
+                    virtual_bg_dd, virtual_bg_file],
             outputs=[script_out, audio_out, video_out, status_box, export_files],
         )
         preview_btn.click(

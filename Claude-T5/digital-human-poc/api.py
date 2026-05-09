@@ -30,6 +30,7 @@ from src.avatar.compositor import RESOLUTION_PRESETS
 from src.avatar.merger import TRANSITION_CHOICES
 from src.avatar.gallery import scan_avatars, get_avatar_path, AvatarInfo
 from src.tts.engine import EMOTION_PRESETS
+from src.avatar.virtual_background import BUILTIN_BACKGROUNDS
 
 app = FastAPI(
     title="数字人汇报系统 API",
@@ -196,6 +197,7 @@ def get_options(_: bool = Depends(verify_api_key)):
         "languages": ["auto", "zh", "en"],
         "avatars": [{"id": a.id, "name": a.name, "gender": a.gender,
                       "style": a.style, "builtin": a.builtin} for a in avatars],
+        "virtual_backgrounds": list(BUILTIN_BACKGROUNDS.keys()),
     }
 
 
@@ -216,6 +218,7 @@ async def generate(
     parallel: bool = Form(False),
     watermark_text: Optional[str] = Form(None),
     avatar_id: Optional[str] = Form(None, description="头像 ID（从 /options 获取，空=默认头像）"),
+    virtual_background: Optional[str] = Form(None, description="虚拟背景: 图片路径或预设名（纯白/浅灰/深蓝渐变/暖灰渐变/深色商务）"),
     auth: bool = Depends(verify_api_key),
 ):
     """提交生成任务（异步）"""
@@ -255,6 +258,7 @@ async def generate(
         "generate_cover_image": True,
         "use_cache": True,
         "avatar_image": get_avatar_path(avatar_id),
+        "virtual_background": virtual_background,
     }
 
     # 后台执行
