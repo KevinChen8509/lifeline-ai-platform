@@ -120,6 +120,33 @@ def _merge_audios(audio_paths: list[str], output_path: str) -> str:
 # ============ 处理函数 ============
 
 
+def _timeline_html(completed: int, total: int, current_step: str, elapsed: float) -> str:
+    """生成进度时间线 HTML"""
+    pct = int(completed / total * 100) if total > 0 else 0
+    bar_color = "#4CAF50" if completed == total else "#2196F3"
+    return (
+        f'<div style="font-family:sans-serif">'
+        f'<div style="margin-bottom:8px"><b>{current_step}</b>'
+        f' &nbsp; <span style="color:#888">已用时 {elapsed:.0f}s</span></div>'
+        f'<div style="background:#e0e0e0;border-radius:4px;height:24px;position:relative">'
+        f'<div style="background:{bar_color};height:24px;border-radius:4px;width:{pct}%">'
+        f'</div>'
+        f'<div style="position:absolute;top:0;left:0;width:100%;text-align:center;'
+        f'line-height:24px;color:#fff;font-size:12px;font-weight:bold">'
+        f'{completed}/{total} ({pct}%)</div></div>'
+        f'<div style="display:flex;margin-top:6px">'
+    ) + "".join(
+        f'<div style="flex:1;text-align:center;font-size:11px;color:{"#4CAF50" if i < completed else "#aaa"}">'
+        f'{"&#10003;" if i < completed else str(i+1)}</div>'
+        for i in range(total)
+    ) + '</div></div>'
+
+
+def _page_gallery(videos: dict) -> list[str]:
+    """从视频字典生成 Gallery 值（每页视频路径列表）"""
+    return [str(v) for _, v in sorted(videos.items()) if Path(str(v)).exists()]
+
+
 def _pick_ppt(ppt_file):
     """从单文件或多文件输入中取第一个 PPT 路径"""
     if ppt_file is None:
@@ -157,7 +184,7 @@ def generate(
     """核心处理函数 — 生成器，流式更新 UI"""
     ppt_file = _pick_ppt(ppt_file)
     if ppt_file is None:
-        yield ("请上传 PPT 文件", None, None, "请上传 PPT 文件", None)
+        yield ("请上传 PPT 文件", None, None, "请上传 PPT 文件", None, [], "")
         return
 
     export_paths = []  # 收集可下载素材
@@ -196,15 +223,33 @@ def generate(
     output_dir = OUTPUT_DIR / f"web_{ppt_path.stem}_{int(start)}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    page_videos_gallery = []  # 逐页累积的视频路径
+    total_pages_final = 0  # 总页数（演讲稿生成后更新）
+
     def status(msg):
         return f"{msg}  (已用时 {time.time() - start:.0f}s)"
+
+    def _out(script=None, audio=None, video=None, msg="", exports=None,
+             gallery=None, step="", completed_pages=0, total_pages=0):
+        """统一输出元组"""
+        elapsed = time.time() - start
+        html = _timeline_html(completed_pages, total_pages, step, elapsed) if total_pages > 0 else ""
+        return (
+            script or script_display if 'script_display' in dir() else "",
+            audio,
+            video,
+            msg,
+            exports,
+            gallery or page_videos_gallery,
+            html,
+        )
 
     # === Step 1: 解析 PPT ===
     progress(0.05, desc="解析 PPT...")
     try:
         slides = parse_ppt(ppt_path)
     except Exception as e:
-        yield (f"**解析失败**: {e}", None, None, f"错误: {e}", None)
+        yield _out(script=f"**解析失败**: {e}", msg=f"错误: {e}")
         return
 
     markdown = slides_to_markdown(slides)
@@ -223,7 +268,8 @@ def generate(
     info = f"**共 {len(slides)} 页** | 语言: {lang_label}\n\n"
     for s in slides:
         info += f"- 第{s.slide_index + 1}页: {s.title or '(无标题)'}\n"
-    yield (info, None, None, status(f"解析完成: {len(slides)} 页 [{lang_label}]"), None)
+    yield _out(script=info, msg=status(f"解析完成: {len(slides)} 页 [{lang_label}]"),
+               step="PPT 解析", completed_pages=1, total_pages=1)
 
     # === Step 1.5: 导出幻灯片图片 ===
     slide_images = []
@@ -233,9 +279,11 @@ def generate(
             slide_dir = output_dir / "slides"
             rw, rh = _get_resolution(resolution)
             slide_images = render_slides(ppt_path, slide_dir, width=rw, height=rh)
-            yield (info, None, None, status(f"导出 {len(slide_images)} 张幻灯片"), None)
+            yield _out(script=info, msg=status(f"导出 {len(slide_images)} 张幻灯片"),
+                       step="幻灯片导出", completed_pages=1, total_pages=1)
         except Exception as e:
-            yield (info, None, None, status(f"幻灯片导出跳过: {e}"), None)
+            yield _out(script=info, msg=status(f"幻灯片导出跳过: {e}"),
+                       step="幻灯片导出", completed_pages=0, total_pages=1)
             layout = "avatar-only"
 
     # === Step 2: 生成演讲稿 ===
@@ -244,7 +292,7 @@ def generate(
         script = generate_script(markdown, style=style, language=language)
         script_pages = parse_script_pages(script)
     except Exception as e:
-        yield (info + f"\n\n**生成失败**: {e}", None, None, f"错误: {e}", None)
+        yield _out(script=info + f"\n\n**生成失败**: {e}", msg=f"错误: {e}")
         return
 
     script_display = f"**{len(script_pages)} 段演讲稿** [{lang_label}]\n\n---\n\n"
@@ -253,7 +301,9 @@ def generate(
     script_file = output_dir / "script.txt"
     script_file.write_text(script, encoding="utf-8")
     export_paths.append(str(script_file))
-    yield (script_display, None, None, status(f"演讲稿完成: {len(script_pages)} 段"), None)
+    total_pages_final = len(script_pages)
+    yield _out(msg=status(f"演讲稿完成: {total_pages_final} 段"),
+               step="演讲稿生成", completed_pages=1, total_pages=1)
 
     # === Step 3+4: TTS + 视频 逐页流水线 ===
     progress(0.3, desc="逐页合成音频+视频...")
@@ -301,8 +351,10 @@ def generate(
             except Exception as sadtalker_err:
                 # SadTalker 失败时自动降级为 fallback
                 print(f"  SadTalker 失败，降级为静态图片: {sadtalker_err}")
-                yield (script_display, audio_paths[-1] if audio_paths else None, None,
-                       status(f"SadTalker 失败，自动切换为快速模式..."), None)
+                yield _out(audio=audio_paths[-1] if audio_paths else None,
+                           msg=status(f"SadTalker 失败，自动切换为快速模式..."),
+                           step=f"TTS+视频 {page_idx+1}/{total_pages}",
+                           completed_pages=page_idx, total_pages=total_pages)
                 use_fallback = True
                 videos[pn] = generate_fallback_video(
                     audio_path=str(audio_out),
@@ -310,29 +362,35 @@ def generate(
                     output_path=video_out,
                 )
         else:
-            yield (script_display, None, None,
-                   "SadTalker 未安装，请选择快速模式", None)
+            yield _out(msg="SadTalker 未安装，请选择快速模式",
+                       step="TTS+视频", completed_pages=0, total_pages=total_pages)
             return
 
-        # 流式: 每完成一页就展示当前页视频
+        # 流式: 每完成一页就展示当前页视频 + Gallery
         if videos[pn]:
-            yield (script_display, audio_paths[-1], str(videos[pn]),
-                   status(f"第 {pn + 1}/{total_pages} 页完成"), None)
+            page_videos_gallery.append(str(videos[pn]))
+            yield _out(audio=audio_paths[-1], video=str(videos[pn]),
+                       msg=status(f"第 {pn + 1}/{total_pages} 页完成"),
+                       gallery=page_videos_gallery,
+                       step=f"TTS+视频 {page_idx+1}/{total_pages}",
+                       completed_pages=page_idx + 1, total_pages=total_pages)
 
     # 合并所有音频
     merged_audio = str(output_dir / "merged_audio.mp3")
     _merge_audios(audio_paths, merged_audio)
     export_paths.extend(audio_paths)
-    yield (script_display, merged_audio, str(videos[page_nums[-1]]),
-           status(f"音频+视频完成: {total_pages} 页"), None)
+    yield _out(audio=merged_audio, video=str(videos[page_nums[-1]]),
+               msg=status(f"音频+视频完成: {total_pages} 页"),
+               step="音频合并", completed_pages=total_pages, total_pages=total_pages)
 
     # === Step 4.4: 虚拟背景 ===
     if virtual_bg:
         progress(0.87, desc="应用虚拟背景...")
         vbg_dir = output_dir / "vbg"
         videos = apply_background_to_pages(videos, vbg_dir, background=virtual_bg)
-        yield (script_display, merged_audio, str(videos[page_nums[-1]]),
-               status("虚拟背景应用完成"), None)
+        yield _out(audio=merged_audio, video=str(videos[page_nums[-1]]),
+                   msg=status("虚拟背景应用完成"),
+                   step="虚拟背景", completed_pages=total_pages, total_pages=total_pages)
 
     # === Step 4.5: 画中画合成 ===
     if layout == "pip" and slide_images:
@@ -401,16 +459,18 @@ def generate(
             wm_path = output_dir / "final_wm.mp4"
             final = add_text_watermark(final, text=watermark_text.strip(), output_path=wm_path)
         except Exception as e:
-            yield (script_display, merged_audio, str(final),
-                   f"水印添加失败: {e}", export_paths)
+            yield _out(audio=merged_audio, video=str(final),
+                       msg=f"水印添加失败: {e}", exports=export_paths,
+                       step="水印", completed_pages=total_pages, total_pages=total_pages)
     elif watermark_image:
         progress(0.98, desc="添加图片水印...")
         try:
             wm_path = output_dir / "final_wm.mp4"
             final = add_image_watermark(final, image_path=watermark_image, output_path=wm_path)
         except Exception as e:
-            yield (script_display, merged_audio, str(final),
-                   f"水印添加失败: {e}", export_paths)
+            yield _out(audio=merged_audio, video=str(final),
+                       msg=f"水印添加失败: {e}", exports=export_paths,
+                       step="水印", completed_pages=total_pages, total_pages=total_pages)
 
     # 封面
     if enable_cover:
@@ -438,8 +498,9 @@ def generate(
         duration_seconds=elapsed,
         pages=len(script_pages),
     )
-    yield (script_display, merged_audio, str(final),
-           f"完成! 总耗时 {elapsed:.0f}s", export_paths)
+    yield _out(audio=merged_audio, video=str(final),
+               msg=f"完成! 总耗时 {elapsed:.0f}s", exports=export_paths,
+               step="完成", completed_pages=total_pages, total_pages=total_pages)
 
 
 def generate_preview(
@@ -456,7 +517,7 @@ def generate_preview(
     """快速预览 — 每页只取前 50 字，静态图片模式，跳过 PIP/字幕/BGM"""
     ppt_file = _pick_ppt(ppt_file)
     if ppt_file is None:
-        yield ("请上传 PPT 文件", None, None, "请上传 PPT 文件", None)
+        yield ("请上传 PPT 文件", None, None, "请上传 PPT 文件", None, [], "")
         return
 
     start = time.time()
@@ -481,7 +542,7 @@ def generate_preview(
     try:
         slides = parse_ppt(ppt_path)
     except Exception as e:
-        yield (f"**解析失败**: {e}", None, None, f"错误: {e}", None)
+        yield (f"**解析失败**: {e}", None, None, f"错误: {e}", None, [], "")
         return
 
     markdown = slides_to_markdown(slides)
@@ -493,7 +554,7 @@ def generate_preview(
     info = f"**[预览模式] 共 {len(slides)} 页** [{lang_label}]\n\n"
     for s in slides:
         info += f"- 第{s.slide_index + 1}页: {s.title or '(无标题)'}\n"
-    yield (info, None, None, status(f"解析完成: {len(slides)} 页"), None)
+    yield (info, None, None, status(f"解析完成: {len(slides)} 页"), None, [], "")
 
     # Step 2: 生成演讲稿
     progress(0.2, desc="生成演讲稿...")
@@ -501,7 +562,7 @@ def generate_preview(
         script = generate_script(markdown, style=style, language=language)
         script_pages = parse_script_pages(script)
     except Exception as e:
-        yield (info + f"\n\n**生成失败**: {e}", None, None, f"错误: {e}", None)
+        yield (info + f"\n\n**生成失败**: {e}", None, None, f"错误: {e}", None, [], "")
         return
 
     # 截断: 每页只取前 50 字
@@ -515,7 +576,7 @@ def generate_preview(
     script_display = f"**[预览] {len(preview_pages)} 段 (每段截取前50字)**\n\n---\n\n"
     for pn, text in sorted(preview_pages.items()):
         script_display += f"### 第 {pn + 1} 页\n{text}\n\n---\n\n"
-    yield (script_display, None, None, status("演讲稿完成 (截断)"), None)
+    yield (script_display, None, None, status("演讲稿完成 (截断)"), None, [], "")
 
     # Step 3: TTS
     progress(0.4, desc="合成预览语音...")
@@ -531,8 +592,8 @@ def generate_preview(
 
     merged_audio = str(output_dir / "merged_audio.mp3")
     _merge_audios(audio_paths, merged_audio)
-    yield (script_display, merged_audio, None, status("语音合成完成"), None)
-    yield (script_display, merged_audio, None, status("语音合成完成"), None)
+    yield (script_display, merged_audio, None, status("语音合成完成"), None, [], "")
+    yield (script_display, merged_audio, None, status("语音合成完成"), None, [], "")
 
     # Step 4: 静态图片视频
     progress(0.6, desc="生成预览视频...")
@@ -575,7 +636,7 @@ def generate_preview(
         is_preview=True,
     )
     yield (script_display, merged_audio, str(final),
-           f"预览完成! 耗时 {elapsed:.0f}s", None)
+           f"预览完成! 耗时 {elapsed:.0f}s", None, [], "")
 
 
 def generate_batch(
@@ -596,7 +657,7 @@ def generate_batch(
 ):
     """批量处理多个 PPT 文件"""
     if not ppt_files:
-        yield ("请上传 PPT 文件", None, None, "请上传 PPT 文件", None)
+        yield ("请上传 PPT 文件", None, None, "请上传 PPT 文件", None, [], "")
         return
 
     if isinstance(ppt_files, str):
@@ -620,7 +681,7 @@ def generate_batch(
     all_outputs = []
     results_md = f"**批量处理 {total} 个文件**\n\n---\n\n"
 
-    yield (results_md + "准备中...", None, None, "开始批量处理...", None)
+    yield (results_md + "准备中...", None, None, "开始批量处理...", None, [], "")
 
     for idx, ppt_file in enumerate(ppt_files):
         ppt_path = Path(ppt_file)
@@ -689,11 +750,11 @@ def generate_batch(
         pct = (idx + 1) / total
         progress(pct, desc=f"完成 {idx + 1}/{total}")
         yield (results_md, None, None,
-               f"批量处理: {idx + 1}/{total} 完成", None)
+               f"批量处理: {idx + 1}/{total} 完成", None, [], "")
 
     elapsed = time.time() - batch_start
     yield (results_md, None, None,
-           f"批量完成! {total} 个文件, 耗时 {elapsed:.0f}s", all_outputs)
+           f"批量完成! {total} 个文件, 耗时 {elapsed:.0f}s", all_outputs, [], "")
 
 
 # ============ 构建 UI ============
@@ -912,6 +973,19 @@ def build_ui():
                 gr.Markdown("### 结果")
 
                 with gr.Tabs():
+                    with gr.Tab("进度"):
+                        timeline_html = gr.HTML(
+                            value="",
+                            label="生成进度",
+                        )
+                        page_gallery = gr.Gallery(
+                            label="逐页预览（每页完成后自动展示）",
+                            columns=3,
+                            rows=2,
+                            height="auto",
+                            allow_preview=True,
+                        )
+
                     with gr.Tab("演讲稿"):
                         script_out = gr.Markdown(
                             "上传 PPT 并点击「生成」"
@@ -944,20 +1018,23 @@ def build_ui():
                     transition_dd, wm_text, wm_image, cover_cb,
                     resolution_dd, parallel_cb, cache_cb,
                     virtual_bg_dd, virtual_bg_file],
-            outputs=[script_out, audio_out, video_out, status_box, export_files],
+            outputs=[script_out, audio_out, video_out, status_box, export_files,
+                     page_gallery, timeline_html],
         )
         preview_btn.click(
             fn=generate_preview,
             inputs=[ppt_input, style_dd, voice_dd,
                     avatar_radio, avatar_file, rate_dd, language_dd, emotion_dd],
-            outputs=[script_out, audio_out, video_out, status_box, export_files],
+            outputs=[script_out, audio_out, video_out, status_box, export_files,
+                     page_gallery, timeline_html],
         )
         batch_btn.click(
             fn=generate_batch,
             inputs=[ppt_input, style_dd, voice_dd,
                     avatar_radio, avatar_file, mode_radio, layout_dd,
                     subtitle_cb, bgm_cb, rate_dd, bgm_file, language_dd, emotion_dd],
-            outputs=[script_out, audio_out, video_out, status_box, export_files],
+            outputs=[script_out, audio_out, video_out, status_box, export_files,
+                     page_gallery, timeline_html],
         )
 
     return app
