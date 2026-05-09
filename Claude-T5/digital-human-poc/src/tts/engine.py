@@ -11,6 +11,9 @@ from concurrent.futures import ThreadPoolExecutor
 import edge_tts
 
 from src.config import TTS_VOICE, TTS_RATE, AUDIO_DIR
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 
 def _get_audio_duration(audio_path: str | Path) -> float:
@@ -26,6 +29,21 @@ def _get_audio_duration(audio_path: str | Path) -> float:
         return float(result.stdout.strip())
     except (ValueError, OSError):
         return 0.0
+
+
+def _normalize_audio(audio_path: Path):
+    """使用 FFmpeg loudnorm 标准化音频响度"""
+    tmp = audio_path.with_suffix(".norm.mp3")
+    result = subprocess.run([
+        "ffmpeg", "-y", "-i", str(audio_path),
+        "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+        "-ar", "22050",
+        str(tmp),
+    ], capture_output=True, text=True)
+    if result.returncode == 0 and tmp.exists():
+        tmp.replace(audio_path)
+    else:
+        tmp.unlink(missing_ok=True)  # 标准化失败不影响流程
 
 
 # ============ 缓存 ============
@@ -93,7 +111,7 @@ async def _synthesize(
             import shutil
             shutil.copy2(cache_file, output_path)
             duration = _get_audio_duration(output_path)
-            print(f"  [缓存命中] {output_path.name}")
+            log.info("  [缓存命中] {output_path.name}")
             return TTSResult(
                 audio_path=str(output_path),
                 duration_seconds=duration,
@@ -102,6 +120,9 @@ async def _synthesize(
 
     communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, volume=volume)
     await communicate.save(str(output_path))
+
+    # 音频标准化 (loudnorm)
+    _normalize_audio(output_path)
 
     # 写入缓存
     if use_cache:
@@ -197,7 +218,7 @@ def synthesize_pages(
         results = {}
         for page_num, text in pages.items():
             out_path = output_dir / f"page_{page_num:03d}.mp3"
-            print(f"  合成第 {page_num} 页语音 -> {out_path.name}")
+            log.info("  合成第 {page_num} 页语音 -> {out_path.name}")
             results[page_num] = synthesize_speech(
                 text, out_path, rate=rate, pitch=pitch, volume=volume, use_cache=use_cache
             )
@@ -207,7 +228,7 @@ def synthesize_pages(
     def _syn_one(item):
         page_num, text = item
         out_path = output_dir / f"page_{page_num:03d}.mp3"
-        print(f"  合成第 {page_num} 页语音 -> {out_path.name}")
+        log.info("  合成第 {page_num} 页语音 -> {out_path.name}")
         return page_num, synthesize_speech(
             text, out_path, rate=rate, pitch=pitch, volume=volume, use_cache=use_cache
         )
@@ -255,11 +276,11 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "voices":
-        print("可用中文语音：")
+        log.info("可用中文语音：")
         voices = asyncio.run(list_voices("zh"))
         for v in voices:
-            print(f"  {v['ShortName']}: {v['FriendlyName']}")
+            log.info("  {v['ShortName']}: {v['FriendlyName']}")
     else:
         demo = "大家好，欢迎来到今天的汇报。接下来我将为大家介绍本次项目的核心内容。"
         result = synthesize_speech(demo)
-        print(f"合成完成: {result.audio_path} (约 {result.duration_seconds:.1f}s)")
+        log.info("合成完成: {result.audio_path} (约 {result.duration_seconds:.1f}s)")

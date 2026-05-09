@@ -11,6 +11,9 @@ from src.config import (
     AVATAR_STILL,
     VIDEO_DIR,
 )
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 # SadTalker 源码路径
 SADTALKER_DIR = Path(__file__).resolve().parent.parent.parent / "SadTalker"
@@ -109,7 +112,7 @@ def generate_video_sadtalker(
         cmd.extend(["--enhancer", enhancer])
 
     mode = "CPU" if use_cpu else "GPU"
-    print(f"  SadTalker [{mode}]: {audio_path.name} + {source_image.name}")
+    log.info("SadTalker [%s]: %s + %s", mode, audio_path.name, source_image.name)
 
     t0 = time.time()
     result = subprocess.run(cmd, text=True, cwd=str(SADTALKER_DIR))
@@ -134,7 +137,7 @@ def generate_video_sadtalker(
     elif not output_path.exists():
         raise RuntimeError(f"SadTalker 未生成视频文件，检查输出目录: {result_dir}")
 
-    print(f"    完成 ({elapsed:.0f}s) -> {output_path.name}")
+    log.info("完成 (%ds) -> %s", int(elapsed), output_path.name)
     return output_path
 
 
@@ -149,7 +152,7 @@ def generate_videos_for_pages(
 
     results = {}
     for page_num, tts_result in audio_results.items():
-        print(f"  生成第 {page_num + 1} 页数字人视频...")
+        log.info("生成第 %d 页数字人视频...", page_num + 1)
         video_path = generate_video_sadtalker(
             audio_path=tts_result.audio_path,
             source_image=source_image,

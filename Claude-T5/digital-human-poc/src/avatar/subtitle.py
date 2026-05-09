@@ -3,6 +3,9 @@
 import re
 import subprocess
 from pathlib import Path
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 
 def _split_sentences(text: str, max_chars: int = 24) -> list[str]:
@@ -112,12 +115,12 @@ def burn_subtitles(
         str(output_path),
     ]
 
-    print(f"  烧录字幕: {video_path.name}")
+    log.info("  烧录字幕: {video_path.name}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         # 如果 subtitles 滤镜失败（可能编译时不支持 libass），
         # 降级为直接拷贝（不烧录字幕）
-        print(f"  警告: 字幕烧录失败，跳过字幕")
+        log.warning("警告: 字幕烧录失败，跳过字幕")
         import shutil
         shutil.copy2(video_path, output_path)
         return output_path

@@ -2,6 +2,9 @@
 
 import subprocess
 from pathlib import Path
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 # 默认 BGM 文件
 DEFAULT_BGM = Path(__file__).parent.parent.parent / "assets" / "bgm_default.wav"
@@ -38,7 +41,7 @@ def mix_bgm(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not bgm_path.exists():
-        print(f"  警告: BGM 文件不存在 {bgm_path}，跳过混音")
+        log.warning("警告: BGM 文件不存在 {bgm_path}，跳过混音")
         return video_path
 
     # FFmpeg amix 滤镜:
@@ -65,10 +68,10 @@ def mix_bgm(
         str(output_path),
     ]
 
-    print(f"  混合背景音乐: {video_path.name}")
+    log.info("  混合背景音乐: {video_path.name}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"  警告: BGM 混音失败，使用原视频")
+        log.warning("警告: BGM 混音失败，使用原视频")
         return video_path
 
     return output_path

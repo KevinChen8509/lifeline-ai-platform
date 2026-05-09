@@ -24,6 +24,9 @@ from src.avatar.merger import merge_videos
 from src.avatar.watermark import add_text_watermark, add_image_watermark
 from src.avatar.cover import generate_cover, generate_slideshow_cover
 from src.avatar.virtual_background import apply_background_to_pages
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 
 class DigitalHumanPipeline:
@@ -109,7 +112,7 @@ class DigitalHumanPipeline:
             d = self.output_dir / subdir
             if d.exists():
                 shutil.rmtree(d, ignore_errors=True)
-                print(f"  清理: {d.name}/")
+                log.info("  清理: {d.name}/")
         # 清理 BGM 中间文件
         for f in self.output_dir.glob("*_wm.mp4"):
             if str(f) not in preserve_paths:
@@ -158,7 +161,7 @@ class DigitalHumanPipeline:
             progress_callback: 进度回调 (message, progress_0_to_1)
         """
         def _progress(msg: str, pct: float):
-            print(msg)
+            log.info(msg)
             if progress_callback:
                 progress_callback(msg, pct)
 

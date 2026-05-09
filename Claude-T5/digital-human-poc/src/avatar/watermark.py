@@ -4,6 +4,9 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 # Windows 字体候选列表
 _WIN_FONTS = ["simhei.ttf", "msyh.ttc", "msyhbd.ttc", "arial.ttf"]
@@ -90,7 +93,7 @@ def add_text_watermark(
     # 在输出目录中执行，让字体相对路径生效
     cwd = str(output_path.parent)
 
-    print(f"  添加文字水印: \"{text}\" -> {output_path.name}")
+    log.info("  添加文字水印: \"{text}\" -> {output_path.name}")
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if result.returncode != 0:
         raise RuntimeError(f"水印添加失败:\n{result.stderr}")
@@ -151,7 +154,7 @@ def add_image_watermark(
         str(output_path),
     ]
 
-    print(f"  添加图片水印: {image_path.name} -> {output_path.name}")
+    log.info("  添加图片水印: {image_path.name} -> {output_path.name}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"图片水印添加失败:\n{result.stderr}")

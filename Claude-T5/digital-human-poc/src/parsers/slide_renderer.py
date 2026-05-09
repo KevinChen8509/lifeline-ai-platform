@@ -2,6 +2,9 @@
 
 import subprocess
 from pathlib import Path
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 
 def render_slides(
@@ -59,9 +62,9 @@ def render_slides(
 
             if out_path.exists():
                 images.append(out_path)
-                print(f"  导出第 {i} 页: {out_path.name}")
+                log.info("  导出第 {i} 页: {out_path.name}")
             else:
-                print(f"  警告: 第 {i} 页导出失败")
+                log.warning("警告: 第 {i} 页导出失败")
 
         return images
 

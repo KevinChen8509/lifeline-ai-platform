@@ -3,6 +3,9 @@
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from src.config import AVATAR_SOURCE_IMAGE, VIDEO_DIR
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 
 def generate_fallback_video(
@@ -37,7 +40,7 @@ def generate_fallback_video(
         str(output_path),
     ]
 
-    print(f"  FFmpeg 合成静态视频: {output_path.name}")
+    log.info("合成静态视频: %s", output_path.name)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"FFmpeg 执行失败:\n{result.stderr}")

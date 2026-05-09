@@ -6,6 +6,9 @@ from dataclasses import dataclass, asdict
 
 from pptx import Presentation
 from pptx.util import Inches
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 
 @dataclass
@@ -131,8 +134,8 @@ def slides_to_json(slides: list[SlideContent]) -> str:
 if __name__ == "__main__":
     import sys
     if len(sys.argv) < 2:
-        print("用法: python ppt_parser.py <ppt文件路径>")
+        log.info("用法: python ppt_parser.py <ppt文件路径>")
         sys.exit(1)
 
     result = parse_ppt(sys.argv[1])
-    print(slides_to_markdown(result))
+    log.info("解析完成: %d 页", len(result))

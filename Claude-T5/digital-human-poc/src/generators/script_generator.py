@@ -2,6 +2,9 @@
 
 from openai import OpenAI
 from src.config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, LLM_TEMPERATURE
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 SYSTEM_PROMPT_ZH = """你是一位专业的演讲稿撰写专家。你的任务是将 PPT 的内容转化为自然、流畅的口语化演讲稿。
 
@@ -151,13 +154,13 @@ if __name__ == "__main__":
     from src.parsers.ppt_parser import parse_ppt, slides_to_markdown
 
     if len(sys.argv) < 2:
-        print("用法: python script_generator.py <ppt文件路径> [style=formal]")
+        log.info("用法: python script_generator.py <ppt文件路径> [style=formal]")
         sys.exit(1)
 
     slides = parse_ppt(sys.argv[1])
     md = slides_to_markdown(slides)
     style = sys.argv[2] if len(sys.argv) > 2 else "formal"
 
-    print("正在生成演讲稿...")
+    log.info("正在生成演讲稿...")
     result = generate_script(md, style=style)
-    print(result)
+    log.info("演讲稿生成完成 (%d 字)", len(result))

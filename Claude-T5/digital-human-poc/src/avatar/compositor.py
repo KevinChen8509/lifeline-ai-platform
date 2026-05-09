@@ -3,6 +3,9 @@
 import subprocess
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 # 分辨率预设
 RESOLUTION_PRESETS = {
@@ -76,7 +79,7 @@ def composite_pip(
         str(output_path),
     ]
 
-    print(f"  合成画中画 [{resolution}]: {ppt_image.name} + {avatar_video.name}")
+    log.info("  合成画中画 [{resolution}]: {ppt_image.name} + {avatar_video.name}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"画中画合成失败:\n{result.stderr}")

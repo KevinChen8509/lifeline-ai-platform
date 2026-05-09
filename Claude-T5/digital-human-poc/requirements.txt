@@ -28,3 +28,4 @@ pywin32>=306                      # PowerPoint COM 自动化
 
 # ---- 开发工具 ----
 pytest>=8.0.0
+pytest-cov>=7.0.0

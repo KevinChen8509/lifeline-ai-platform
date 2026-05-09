@@ -4,6 +4,9 @@ import subprocess
 from pathlib import Path
 
 from src.config import BASE_DIR
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 BACKGROUNDS_DIR = BASE_DIR / "assets" / "backgrounds"
 
@@ -148,11 +151,11 @@ def _apply_bg_image(
         str(output_path),
     ]
 
-    print(f"  虚拟背景: {input_path.name} -> {output_path.name}")
+    log.info("  虚拟背景: {input_path.name} -> {output_path.name}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         # colorkey 失败则降级为直接拷贝
-        print(f"  虚拟背景失败，保留原背景: {result.stderr[:200]}")
+        log.warning("虚拟背景失败，保留原背景: {result.stderr[:200]}")
         import shutil
         shutil.copy2(input_path, output_path)
         return output_path
@@ -189,10 +192,10 @@ def _apply_bg_video(
         str(output_path),
     ]
 
-    print(f"  虚拟背景(视频): {input_path.name} -> {output_path.name}")
+    log.info("  虚拟背景(视频): {input_path.name} -> {output_path.name}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(f"  虚拟背景失败，保留原背景: {result.stderr[:200]}")
+        log.warning("虚拟背景失败，保留原背景: {result.stderr[:200]}")
         import shutil
         shutil.copy2(input_path, output_path)
         return output_path

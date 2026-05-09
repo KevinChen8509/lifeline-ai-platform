@@ -2,6 +2,9 @@
 
 import subprocess
 from pathlib import Path
+from src.logger import get_logger
+
+log = get_logger(__name__)
 
 
 # 可用转场效果（已验证 FFmpeg 8.1 xfade 支持）
@@ -84,7 +87,7 @@ def _merge_concat(video_paths: list[Path], output_path: Path) -> Path:
         "-c", "copy",
         str(output_path),
     ]
-    print(f"  合并 {len(video_paths)} 段视频 -> {output_path.name}")
+    log.info("  合并 {len(video_paths)} 段视频 -> {output_path.name}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"视频合并失败:\n{result.stderr}")
@@ -159,11 +162,11 @@ def _merge_xfade(
         str(output_path),
     ]
 
-    print(f"  合并 {n} 段视频 (转场: {transition}, {td}s) -> {output_path.name}")
+    log.info("  合并 {n} 段视频 (转场: {transition}, {td}s) -> {output_path.name}")
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         # xfade 失败时降级为 concat
-        print(f"  警告: 转场合并失败，降级为直接拼接")
+        log.warning("警告: 转场合并失败，降级为直接拼接")
         return _merge_concat(video_paths, output_path)
 
     return output_path
