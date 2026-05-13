@@ -1,0 +1,72 @@
+# Text-to-SQL Skill 配置文件
+# 环境变量引用格式: ${ENV_VAR_NAME}
+
+llm:
+  base_url: "${LLM_BASE_URL}"           # 火山引擎: https://ark.cn-beijing.volces.com/api/v3
+  api_key: "${LLM_API_KEY}"             # API 密钥
+  model: "${LLM_MODEL}"                 # 模型或 endpoint ID
+  temperature: 0.1
+  max_tokens: 2048
+  timeout: 30
+
+embedding:
+  model: "text2vec-base-chinese"        # 本地模型；API 模式: "bge-m3"
+  dimension: 768
+
+knowledge:
+  backend: "chromadb"
+  persist_dir: "./data/knowledge"
+  top_k: 3
+  similarity_threshold: 0.5
+
+databases:
+  - name: "test_sqlite"
+    type: "sqlite"
+    host: "localhost"
+    port: 0
+    username: "default"
+    password: ""
+    database: "./data/test_e2e.db"
+    readonly: true
+    max_rows: 10000
+    timeout: 30
+
+  - name: "clickhouse_analytics"
+    type: "clickhouse"
+    host: "${CH_HOST}"
+    port: 8123
+    username: "${CH_USER}"
+    password: "${CH_PASSWORD}"
+    database: "analytics"
+    readonly: true
+    max_rows: 10000
+    timeout: 30
+
+  - name: "postgresql_business"
+    type: "postgresql"
+    host: "${PG_HOST}"
+    port: 5432
+    username: "${PG_USER}"
+    password: "${PG_PASSWORD}"
+    database: "business"
+    schema: "public"
+    readonly: true
+    max_rows: 5000
+    timeout: 30
+
+security:
+  mode: "readonly"
+  max_execution_time: 30
+  max_result_rows: 1000
+  blocked_keywords:
+    - "DROP"
+    - "DELETE"
+    - "TRUNCATE"
+    - "ALTER"
+    - "INSERT"
+    - "UPDATE"
+    - "GRANT"
+    - "REVOKE"
+  enable_row_filter: false
+  audit_log: "./data/audit/audit.jsonl"
+  auto_learn: true
