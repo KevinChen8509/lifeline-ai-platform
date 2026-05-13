@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Button, Chip } from '@heroui/react'
-import Plot from 'react-plotly.js'
+// @ts-expect-error — plotly.js has no bundled types
+import Plotly from 'plotly.js/dist/plotly.min.js'
 
 interface Props {
   data: Record<string, unknown>[]
@@ -25,6 +26,31 @@ export default function ChartView({ data, chart }: Props) {
   const xVals = hasX ? data.map((r) => r[chart.x_column!]) : data.map((_, i) => i + 1)
   const yVals = hasY ? data.map((r) => Number(r[chart.y_column!]) || 0) : []
 
+  const isPie = chart.chart_type === 'pie'
+  const isHistogram = chart.chart_type === 'histogram'
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const trace: any = isPie
+    ? { type: 'pie', labels: xVals as string[], values: yVals }
+    : isHistogram
+      ? { type: 'histogram', x: yVals }
+      : {
+          type: chart.chart_type === 'scatter' ? 'scatter' : 'bar',
+          x: xVals,
+          y: yVals,
+          marker: { color: '#6366f1' },
+        }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const layout: any = {
+    margin: { t: 20, r: 20, b: 40, l: 50 },
+    xaxis: { title: chart.x_column },
+    yaxis: { title: chart.y_column },
+    paper_bgcolor: 'transparent',
+    plot_bgcolor: 'transparent',
+    font: { size: 11 },
+  }
+
   if (!visible) {
     return (
       <div className="px-4 py-2 border-t border-gray-100">
@@ -45,9 +71,6 @@ export default function ChartView({ data, chart }: Props) {
     )
   }
 
-  const isPie = chart.chart_type === 'pie'
-  const isHistogram = chart.chart_type === 'histogram'
-
   return (
     <div className="px-4 py-3 border-t border-gray-100">
       <div className="flex items-center gap-2 mb-2">
@@ -63,30 +86,25 @@ export default function ChartView({ data, chart }: Props) {
           收起
         </Button>
       </div>
-      <Plot
-        data={[
-          isPie
-            ? { type: 'pie' as const, labels: xVals as string[], values: yVals }
-            : isHistogram
-              ? { type: 'histogram' as any, x: yVals }
-              : {
-                  type: (chart.chart_type === 'scatter' ? 'scatter' : 'bar') as any,
-                  x: xVals,
-                  y: yVals,
-                  marker: { color: '#6366f1' },
-                },
-        ]}
-        layout={{
-          margin: { t: 20, r: 20, b: 40, l: 50 },
-          xaxis: { title: chart.x_column },
-          yaxis: { title: chart.y_column },
-          paper_bgcolor: 'transparent',
-          plot_bgcolor: 'transparent',
-          font: { size: 11 },
-        }}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: '100%', height: '320px' }}
-      />
+      <PlotlyDiv trace={trace} layout={layout} />
     </div>
   )
+}
+
+function PlotlyDiv({ trace, layout }: { trace: any; layout: any }) {
+  const divRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = divRef.current
+    if (!el) return
+    Plotly.newPlot(el, [trace], layout, {
+      displayModeBar: false,
+      responsive: true,
+    })
+    return () => {
+      if (el) Plotly.purge(el)
+    }
+  }, [trace, layout])
+
+  return <div ref={divRef} style={{ width: '100%', height: '320px' }} />
 }
