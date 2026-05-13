@@ -264,3 +264,31 @@ class ChromaDBStore(KnowledgeStore):
             "qsql_count": self._qsql_store.count(),
             "total": self._ddl_store.count() + self._doc_store.count() + self._qsql_store.count(),
         }
+
+    def clear_collection(self, collection_type: str) -> int:
+        """清空指定类型的知识库，返回删除数量。"""
+        mapping = {
+            "ddl": self._ddl_store,
+            "documentation": self._doc_store,
+            "question_sql": self._qsql_store,
+        }
+        if collection_type == "all":
+            total = 0
+            for coll in mapping.values():
+                count = coll.count()
+                if count > 0:
+                    ids = coll.get()["ids"]
+                    coll.delete(ids=ids)
+                    total += count
+            logger.info("已清空全部知识库，共删除 %d 条", total)
+            return total
+
+        coll = mapping.get(collection_type)
+        if not coll:
+            raise ValueError(f"未知的知识库类型: {collection_type}")
+        count = coll.count()
+        if count > 0:
+            ids = coll.get()["ids"]
+            coll.delete(ids=ids)
+        logger.info("已清空知识库 %s，删除 %d 条", collection_type, count)
+        return count
