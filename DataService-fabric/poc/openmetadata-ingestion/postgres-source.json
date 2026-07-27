@@ -1,0 +1,29 @@
+{
+  "name": "postgres_external",
+  "displayName": "PostgreSQL - external (外部风险数据)",
+  "description": "PoC 源 C：风险标签（50 行，第三方风控 SaaS 导出）",
+  "serviceType": "databaseServices",
+  "connection": {
+    "config": {
+      "type": "Postgres",
+      "hostPort": "postgres:5432",
+      "username": "external",
+      "password": "external123",
+      "databaseSchema": "public",
+      "sslMode": "disable",
+      "database": "external"
+    }
+  },
+  "ingestionSchedule": {
+    "periodicity": "PT24H"
+  },
+  "owners": [
+    {
+      "name": "元数据工程师",
+      "type": "user"
+    }
+  ],
+  "tags": [
+    "Source.External.Risk"
+  ]
+}

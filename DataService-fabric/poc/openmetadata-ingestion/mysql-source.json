@@ -1,0 +1,32 @@
+{
+  "name": "mysql_customer_db",
+  "displayName": "MySQL - customer_db (业务库)",
+  "description": "PoC 源 A：客户主数据（1000 行）",
+  "serviceType": "databaseServices",
+  "connection": {
+    "config": {
+      "type": "Mysql",
+      "hostPort": "mysql:3306",
+      "username": "root",
+      "password": "poc123",
+      "databaseSchema": "customer_db",
+      "sslMode": "disabled",
+      "connectionOptions": {
+        "serverTimezone": "Asia/Shanghai",
+        "useUnicode": "true"
+      }
+    }
+  },
+  "ingestionSchedule": {
+    "periodicity": "PT1H"
+  },
+  "owners": [
+    {
+      "name": "元数据工程师",
+      "type": "user"
+    }
+  ],
+  "tags": [
+    "Source.Business.Customer"
+  ]
+}

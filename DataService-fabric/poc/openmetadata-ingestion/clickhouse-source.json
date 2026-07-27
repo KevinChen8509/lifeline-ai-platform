@@ -1,0 +1,28 @@
+{
+  "name": "clickhouse_analytics",
+  "displayName": "ClickHouse - analytics (数仓)",
+  "description": "PoC 源 B：订单行为（10000 行）",
+  "serviceType": "databaseServices",
+  "connection": {
+    "config": {
+      "type": "Clickhouse",
+      "hostPort": "clickhouse:9000",
+      "username": "default",
+      "password": "",
+      "databaseSchema": "analytics",
+      "sslMode": "disabled"
+    }
+  },
+  "ingestionSchedule": {
+    "periodicity": "PT1H"
+  },
+  "owners": [
+    {
+      "name": "元数据工程师",
+      "type": "user"
+    }
+  ],
+  "tags": [
+    "Source.DataWarehouse.Orders"
+  ]
+}
