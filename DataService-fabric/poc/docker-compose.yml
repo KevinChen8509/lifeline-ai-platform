@@ -1,0 +1,237 @@
+# Data Fabric 数据服务 PoC - Week 1 编排
+# 7 个服务：mysql(源A) + clickhouse(源B) + postgres(源C) + trino(虚拟层)
+#          + opensearch + openmetadata-mysql + openmetadata(元数据平台)
+#
+# 启动: docker compose up -d
+# 停止: docker compose down
+# 清理: docker compose down -v && docker compose rm -f
+
+name: datafabric-poc
+
+services:
+  # ===================================================================
+  # 源 A: MySQL 业务库（客户主数据）
+  # ===================================================================
+  mysql:
+    image: mysql:8.0
+    container_name: dfp-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-poc123}
+      MYSQL_DATABASE: customer_db
+      TZ: Asia/Shanghai
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --character-set-client-handshake=FALSE
+      - --init-connect=SET NAMES utf8mb4
+      - --performance-schema=ON
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-poc123}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [datafabric]
+
+  # ===================================================================
+  # 源 B: ClickHouse 数仓（订单行为）
+  # 开启 9004 端口（MySQL wire protocol），供 Trino 用 mysql connector 访问
+  # ===================================================================
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: dfp-clickhouse
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse-init:/docker-entrypoint-initdb.d:ro
+      - ./clickhouse-config/mysql-protocol.xml:/etc/clickhouse-server/config.d/mysql-protocol.xml:ro
+      - ./clickhouse-config/default-user.xml:/etc/clickhouse-server/users.d/default-user.xml:ro
+    ports:
+      - "8123:8123"   # HTTP
+      - "9000:9000"   # native TCP
+      - "9004:9004"   # MySQL wire protocol（供 Trino 用）
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [datafabric]
+
+  # ===================================================================
+  # 源 C: PostgreSQL 外部数据（风险标签，从 CSV 导入）
+  # ===================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: dfp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: external
+      POSTGRES_USER: external
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-external123}
+      TZ: Asia/Shanghai
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U external -d external"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [datafabric]
+
+  # ===================================================================
+  # 虚拟数据层: Trino 联邦查询（3 个 Catalog）
+  # ===================================================================
+  trino:
+    image: trinodb/trino:435
+    container_name: dfp-trino
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./trino-conf/mysql.properties:/etc/trino/catalog/mysql.properties:ro
+      - ./trino-conf/clickhouse.properties:/etc/trino/catalog/clickhouse.properties:ro
+      - ./trino-conf/postgres.properties:/etc/trino/catalog/postgres.properties:ro
+      - ./trino-conf/config.properties:/etc/trino/config.properties:ro
+      - ./trino-conf/jvm.config:/etc/trino/jvm.config:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "trino", "--execute", "SELECT 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks: [datafabric]
+
+  # ===================================================================
+  # OpenMetadata 依赖: OpenSearch（搜索）
+  # ===================================================================
+  opensearch:
+    image: opensearchproject/opensearch:2.11.0
+    container_name: dfp-opensearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "true"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: ${OPENSEARCH_ADMIN_PASSWORD:-Admin1234Admin}
+      OS_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -v '\"status\":\"red\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+    networks: [datafabric]
+
+  # ===================================================================
+  # OpenMetadata 依赖: MySQL（OM 自身的元数据库）
+  # ===================================================================
+  openmetadata-mysql:
+    image: mysql:8.1
+    container_name: dfp-om-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${OM_MYSQL_PASSWORD:-om_admin123}
+      MYSQL_DATABASE: openmetadata_db
+      MYSQL_USER: openmetadata_user
+      MYSQL_PASSWORD: ${OM_MYSQL_PASSWORD:-om_admin123}
+      TZ: Asia/Shanghai
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - om-mysql-data:/var/lib/mysql
+    ports:
+      - "13306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${OM_MYSQL_PASSWORD:-om_admin123}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [datafabric]
+
+  # ===================================================================
+  # 元数据平台: OpenMetadata
+  # ===================================================================
+  openmetadata:
+    image: openmetadata/server:1.12.0
+    container_name: dfp-openmetadata
+    restart: unless-stopped
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8585
+      SERVER_ADMIN_PORT: 8586
+      DB_DRIVER_CLASS: com.mysql.cj.jdbc.Driver
+      DB_SCHEME: mysql
+      DB_USE_SSL: "false"
+      DB_SERVER_NAME: openmetadata-mysql:3306
+      DB_DATABASE_NAME: openmetadata_db
+      DB_USER: openmetadata_user
+      DB_USER_PASSWORD: ${OM_MYSQL_PASSWORD:-om_admin123}
+      ELASTICSEARCH_HOST: opensearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEME: http
+      ELASTICSEARCH_TRUST_STORE_PATH: ""
+      ELASTICSEARCH_TRUST_STORE_PASSWORD: ""
+      AIRFLOW_HOST: ""
+      AUTHENTICATION_PROVIDER: basic
+      OM_MAX_FAILED_LOGINS: ${OM_MAX_FAILED_LOGINS:-5}
+      TZ: Asia/Shanghai
+    ports:
+      - "8585:8585"
+      - "8586:8586"
+    depends_on:
+      openmetadata-mysql:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8585/api/v1/system/config/health-check"]
+      interval: 30s
+      timeout: 15s
+      retries: 15
+      start_period: 90s
+    networks: [datafabric]
+
+volumes:
+  mysql-data:
+  clickhouse-data:
+  postgres-data:
+  opensearch-data:
+  om-mysql-data:
+
+networks:
+  datafabric:
+    driver: bridge
