@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Fabric · Week 1 验证台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">∏</span>
+      <div>
+        <h1>Data Fabric · Week 1 验证台</h1>
+        <p class="subtitle">MySQL · ClickHouse · PostgreSQL → Trino 跨源联邦查询实时验证</p>
+      </div>
+    </div>
+    <div class="health" id="health">
+      <span class="dot" id="health-dot"></span>
+      <span id="health-text">检测中…</span>
+    </div>
+    <div class="actions">
+      <button id="run-all" class="btn btn-primary" title="重新跑所有 V 用例">▶ 重跑全部</button>
+      <span class="last-run" id="last-run"></span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- 左：用例卡片 -->
+    <aside class="sidebar">
+      <h2 class="section-title">验证用例 <span class="count" id="pass-count">— / —</span></h2>
+      <div class="card-list" id="card-list">
+        <!-- JS 渲染 -->
+      </div>
+
+      <div class="legend">
+        <div><span class="badge pass">PASS</span> 行数/字段符合期望</div>
+        <div><span class="badge fail">FAIL</span> 数据缺失或查询出错</div>
+        <div><span class="badge pending">PENDING</span> 未执行</div>
+      </div>
+    </aside>
+
+    <!-- 右：详情 -->
+    <section class="detail">
+      <div class="detail-header">
+        <div>
+          <h2 id="detail-title">选择左侧用例</h2>
+          <p id="detail-desc" class="detail-desc">每个用例实时调用 Trino REST API 执行 SQL，结果下方显示</p>
+        </div>
+        <div class="detail-meta" id="detail-meta"></div>
+      </div>
+
+      <!-- 数据源 chips -->
+      <div class="source-chips" id="source-chips"></div>
+
+      <!-- 图表 -->
+      <div class="chart-frame">
+        <div class="chart-frame-title" id="chart-title">图表</div>
+        <div class="chart-host">
+          <canvas id="chart-canvas"></canvas>
+          <pre id="text-output" class="text-output" hidden></pre>
+        </div>
+      </div>
+
+      <!-- 数据表 -->
+      <div class="table-frame">
+        <div class="table-frame-header">
+          <span id="table-title">结果</span>
+          <span class="row-count" id="row-count"></span>
+        </div>
+        <div class="table-scroll">
+          <table id="data-table">
+            <thead><tr></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- SQL -->
+      <details class="sql-block" open>
+        <summary>SQL <span class="hint">(点击折叠)</span></summary>
+        <pre id="sql-text"></pre>
+      </details>
+    </section>
+  </main>
+
+  <footer class="footbar">
+    <span>Trino <code id="trino-ver">—</code></span>
+    <span class="sep">·</span>
+    <span>共 <strong id="total-rows">0</strong> 行数据</span>
+    <span class="sep">·</span>
+    <span>累计耗时 <strong id="total-elapsed">0</strong> ms</span>
+    <span class="sep">·</span>
+    <span class="clock" id="clock"></span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

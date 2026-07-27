@@ -1,0 +1,17 @@
+{
+  "name": "datafabric-week1-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Week 1 跨源联邦查询可视化验证 Dashboard",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
