@@ -1,9 +1,21 @@
-# Week 1 验证 Dashboard
+# Data Fabric 验证 Dashboard（Week 1 + Week 2）
 
-**目的**: 通过可视化方式逐项验证 Data Fabric Week 1 PoC 的完成度。
+**目的**: 通过可视化方式逐项验证 Data Fabric PoC 的完成度。
+
+## Tab 1 · Week 1 跨源联邦查询
 - 5 个跨源联邦查询（V1-V5）实时跑在 Trino 上
 - 每个用例显示：状态徽章 / 耗时 / 数据源 chips / 多种图表 / 数据表 / SQL 原文
-- Trino 不可达时优雅降级（红色徽章 + 错误信息），不会让前端崩溃
+- Trino 不可达时优雅降级（红色徽章 + 错误信息）
+
+## Tab 2 · Week 2 数据服务 + 治理（新增）
+5 个端点面板：
+- **客户画像** `/api/v1/customers/{id}/profile` — 字段 grid，自动标记脱敏/隐藏字段
+- **客户分群** `/api/v1/customers?level=VIP3` — 表格 + 等级/风险 chip
+- **全局指标** `/api/v1/metrics/customer-overview` — 5 张指标卡（ARPU / VIP3 / 高中低风险）
+- **脱敏对比** — 同一客户 × 3 角色（ADMIN/VIEWER/SUPPORT）并排展示，颜色高亮脱敏差异
+- **审计日志** — `/api/v1/audit/recent` 实时流，每 5 秒自动刷新，显示 actor / action / resource / risk
+
+服务栈健康卡（左侧）：Trino / Cube.dev / Spring Boot 三状态，绿色 up / 黄 degraded / 红 down
 
 ## 架构
 
@@ -13,14 +25,16 @@ Browser (localhost:3000)
    ▼
 Node.js + Express (host, port 3000)
    │
-   ▼ POST /v1/statement
-Trino 435 (Docker, port 8080)
+   ├─ Week 1: POST /v1/statement
+   │  └── Trino 435 (port 8080)
+   │       └── MySQL / ClickHouse / PostgreSQL
    │
-   ▼
-3 个数据源 (Docker)
-  ├── MySQL 8.0      (port 3306, 1000 customers)
-  ├── ClickHouse 24.8 (port 8123, 10000 orders)
-  └── PostgreSQL 16   (port 5433, 50 risk tags)
+   └─ Week 2: GET /api/w2/*
+      └── Spring Boot data-service (port 8090)
+          └── POST /cubejs-api/v1/load
+              └── Cube.dev (port 4000)
+                  └── Trino 435 (port 8080)
+                      └── MySQL / ClickHouse / PostgreSQL
 ```
 
 ## 启动
@@ -44,6 +58,9 @@ npm start          # 默认端口 3000
 | `TRINO_URL` | `http://localhost:8080` | Trino 协调器 URL |
 | `TRINO_USER` | `dashboard` | Trino 提交用户名（用于审计） |
 | `TRINO_SOURCE` | `datafabric-dashboard` | Trino 来源标签 |
+| `DATA_SERVICE_URL` | `http://localhost:8090` | Spring Boot 数据服务 URL（Week 2） |
+| `CUBE_URL` | `http://localhost:4000` | Cube.dev 语义层 URL（Week 2） |
+| `CUBEJS_API_SECRET` | `datafabric-poc-secret-2026` | Cube API 鉴权密钥 |
 
 例：自定义 Trino 地址
 ```bash

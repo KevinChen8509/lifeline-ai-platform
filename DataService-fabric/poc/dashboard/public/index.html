@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Data Fabric · Week 1 验证台</title>
+  <title>Data Fabric · 验证台</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -15,8 +15,8 @@
     <div class="brand">
       <span class="brand-mark">∏</span>
       <div>
-        <h1>Data Fabric · Week 1 验证台</h1>
-        <p class="subtitle">MySQL · ClickHouse · PostgreSQL → Trino 跨源联邦查询实时验证</p>
+        <h1>Data Fabric · 验证台</h1>
+        <p class="subtitle">从跨源联邦查询到数据服务 + 治理的端到端可视化</p>
       </div>
     </div>
     <div class="health" id="health">
@@ -29,7 +29,13 @@
     </div>
   </header>
 
-  <main class="layout">
+  <nav class="tab-nav">
+    <button class="tab active" data-tab="week1">Week 1 · 跨源联邦查询</button>
+    <button class="tab" data-tab="week2">Week 2 · 数据服务 + 治理</button>
+  </nav>
+
+  <!-- ============ Week 1 视图（原有） ============ -->
+  <main class="layout week1-view" id="week1-view">
     <!-- 左：用例卡片 -->
     <aside class="sidebar">
       <h2 class="section-title">验证用例 <span class="count" id="pass-count">— / —</span></h2>
@@ -88,6 +94,51 @@
     </section>
   </main>
 
+  <!-- ============ Week 2 视图（新增） ============ -->
+  <main class="layout week2-view" id="week2-view" hidden>
+
+    <!-- 左：服务栈健康 + 端点选择 -->
+    <aside class="sidebar w2-sidebar">
+      <h2 class="section-title">服务栈 <span class="count" id="w2-services-count">—</span></h2>
+      <div class="w2-services" id="w2-services">
+        <!-- JS 渲染：Trino / Cube / Spring Boot 三个状态卡 -->
+      </div>
+
+      <h2 class="section-title">API 端点</h2>
+      <div class="w2-endpoints" id="w2-endpoints">
+        <button class="w2-endpoint-btn active" data-endpoint="profile">客户画像</button>
+        <button class="w2-endpoint-btn" data-endpoint="customers">客户分群</button>
+        <button class="w2-endpoint-btn" data-endpoint="metrics">全局指标</button>
+        <button class="w2-endpoint-btn" data-endpoint="masking">脱敏对比</button>
+        <button class="w2-endpoint-btn" data-endpoint="audit">审计日志</button>
+      </div>
+
+      <div class="w2-controls" id="w2-controls">
+        <label>客户 ID <input id="w2-custId" value="C0001"></label>
+        <label>视图
+          <select id="w2-view">
+            <option value="full">full（完整）</option>
+            <option value="brief">brief（简略）</option>
+          </select>
+        </label>
+        <button class="btn btn-primary" id="w2-run">▶ 调用 API</button>
+      </div>
+    </aside>
+
+    <!-- 右：动态面板 -->
+    <section class="detail" id="w2-detail">
+      <div class="detail-header">
+        <h2 id="w2-title">选择左侧端点</h2>
+        <p class="detail-desc" id="w2-desc">通过数据服务层（Spring Boot :8090）调用，所有响应在右侧可视化。</p>
+      </div>
+
+      <div class="w2-panel" id="w2-panel">
+        <!-- JS 动态渲染：profile/customers/metrics/masking/audit 5 种面板 -->
+      </div>
+    </section>
+
+  </main>
+
   <footer class="footbar">
     <span>Trino <code id="trino-ver">—</code></span>
     <span class="sep">·</span>
@@ -99,5 +150,6 @@
   </footer>
 
   <script src="/app.js"></script>
+  <script src="/w2-app.js"></script>
 </body>
 </html>

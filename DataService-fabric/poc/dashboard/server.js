@@ -3,6 +3,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { executeQuery, healthCheck } from './lib/trino-client.js';
 import { QUERIES } from './queries/index.js';
+import {
+  healthAll,
+  fetchProfile,
+  fetchMetrics,
+  fetchCustomers,
+  fetchAudit,
+  fetchMaskingComparison,
+} from './lib/data-service-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -89,7 +97,53 @@ function evaluatePassFail(query, result) {
   };
 }
 
+// ============================================================
+// Week 2 路由：数据服务 + 治理可视化
+// ============================================================
+
+/** GET /api/w2/health — 全栈健康（Trino + Cube + SpringBoot） */
+app.get('/api/w2/health', async (req, res) => {
+  const result = await healthAll();
+  res.json(result);
+});
+
+/** GET /api/w2/profile?custId=C0001&role=ADMIN&view=full — 单客户画像 */
+app.get('/api/w2/profile', async (req, res) => {
+  const { custId = 'C0001', role = '', view = 'full' } = req.query;
+  const result = await fetchProfile(custId, { role, view });
+  res.status(result.http >= 200 && result.http < 500 ? 200 : 502).json(result);
+});
+
+/** GET /api/w2/customers?level=VIP3&page=0&size=10 — 客户分群 */
+app.get('/api/w2/customers', async (req, res) => {
+  const { level, page = '0', size = '10' } = req.query;
+  const result = await fetchCustomers({ level, page: +page, size: +size });
+  res.json(result);
+});
+
+/** GET /api/w2/metrics — 全局指标快照 */
+app.get('/api/w2/metrics', async (req, res) => {
+  const result = await fetchMetrics();
+  res.json(result);
+});
+
+/** GET /api/w2/audit?n=20 — 审计日志 */
+app.get('/api/w2/audit', async (req, res) => {
+  const { n = '20' } = req.query;
+  const result = await fetchAudit(+n);
+  res.json(result);
+});
+
+/** GET /api/w2/masking-compare?custId=C0001&view=full — 3 角色并排对比 */
+app.get('/api/w2/masking-compare', async (req, res) => {
+  const { custId = 'C0001', view = 'full' } = req.query;
+  const result = await fetchMaskingComparison(custId, view);
+  res.json({ custId, view, comparisons: result });
+});
+
 app.listen(PORT, () => {
-  console.log(`[Week1 Dashboard] http://localhost:${PORT}`);
-  console.log(`[Trino] ${process.env.TRINO_URL || 'http://localhost:8080'}`);
+  console.log(`[Dashboard] http://localhost:${PORT}`);
+  console.log(`[Trino]       ${process.env.TRINO_URL || 'http://localhost:8080'}`);
+  console.log(`[Cube.dev]    ${process.env.CUBE_URL || 'http://localhost:4000'}`);
+  console.log(`[DataService] ${process.env.DATA_SERVICE_URL || 'http://localhost:8090'}`);
 });

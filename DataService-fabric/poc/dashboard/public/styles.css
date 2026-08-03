@@ -607,3 +607,323 @@ tr:hover td { background: var(--bg-2); }
   border: 2px solid var(--bg-0);
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-1); }
+
+/* ============================================================
+   Week 2 样式 —— Tab 导航 + 服务栈 + 脱敏对比 + 审计流
+   ============================================================ */
+
+.tab-nav {
+  display: flex;
+  gap: 4px;
+  padding: 8px 24px 0;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--border-0);
+}
+.tab {
+  background: transparent;
+  color: var(--text-2);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 10px 18px;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.tab:hover { color: var(--text-0); }
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* Week 2 sidebar 扩展 */
+.w2-sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+.w2-services { display: flex; flex-direction: column; gap: 8px; }
+.w2-svc-loading, .w2-svc-down {
+  padding: 12px;
+  background: var(--bg-1);
+  border-radius: 8px;
+  color: var(--text-2);
+  font-size: 13px;
+  text-align: center;
+}
+.w2-svc-card {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-1);
+  border-left: 3px solid var(--text-3);
+  font-size: 13px;
+}
+.w2-svc-card.status-up { border-left-color: var(--ok); }
+.w2-svc-card.status-degraded { border-left-color: var(--warn); }
+.w2-svc-card.status-down { border-left-color: var(--err); }
+.w2-svc-name { font-weight: 600; color: var(--text-0); }
+.w2-svc-status {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin: 4px 0;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+.status-up .w2-svc-status { background: rgba(46,204,113,.15); color: var(--ok); }
+.status-degraded .w2-svc-status { background: rgba(241,196,15,.15); color: var(--warn); }
+.status-down .w2-svc-status { background: rgba(231,76,60,.15); color: var(--err); }
+.w2-svc-meta { color: var(--text-2); font-size: 11px; word-break: break-all; }
+
+/* 端点按钮组 */
+.w2-endpoints { display: flex; flex-direction: column; gap: 4px; }
+.w2-endpoint-btn {
+  text-align: left;
+  background: var(--bg-1);
+  color: var(--text-1);
+  border: 1px solid var(--border-0);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.w2-endpoint-btn:hover {
+  background: var(--bg-2);
+  color: var(--text-0);
+}
+.w2-endpoint-btn.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+/* 控制条 */
+.w2-controls { display: flex; flex-direction: column; gap: 8px; }
+.w2-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.w2-controls input, .w2-controls select {
+  background: var(--bg-1);
+  border: 1px solid var(--border-0);
+  border-radius: 4px;
+  color: var(--text-0);
+  font: inherit;
+  padding: 6px 8px;
+}
+
+/* 面板通用 */
+.w2-loading { padding: 40px; text-align: center; color: var(--text-2); }
+.w2-error { padding: 24px; color: var(--err); }
+.w2-error-block {
+  background: rgba(231,76,60,.08);
+  border: 1px solid rgba(231,76,60,.3);
+  border-radius: 8px;
+  padding: 16px;
+}
+.w2-error-title { font-weight: 700; color: var(--err); margin-bottom: 4px; }
+.w2-error-detail { color: var(--text-1); font-family: var(--mono); font-size: 12px; }
+.w2-api-meta {
+  font-size: 12px;
+  color: var(--text-2);
+  margin-bottom: 12px;
+  font-family: var(--mono);
+  word-break: break-all;
+}
+.w2-api-meta code {
+  background: var(--bg-1);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+/* 客户画像 grid */
+.w2-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.w2-field {
+  background: var(--bg-1);
+  border-radius: 6px;
+  padding: 10px 12px;
+  border-left: 3px solid transparent;
+}
+.w2-field-label {
+  font-size: 11px;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 4px;
+}
+.w2-field-val {
+  color: var(--text-0);
+  font-family: var(--mono);
+  font-size: 13px;
+  word-break: break-all;
+}
+.w2-field.field-masked {
+  border-left-color: var(--warn);
+  background: rgba(241,196,15,.05);
+}
+.w2-field.field-hidden {
+  border-left-color: var(--err);
+  background: rgba(231,76,60,.05);
+  opacity: .6;
+}
+
+/* 表格 */
+.w2-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.w2-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-2);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-0);
+}
+.w2-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-0);
+  color: var(--text-1);
+}
+
+/* 指标卡 */
+.w2-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.w2-metric-card {
+  background: var(--bg-1);
+  border-radius: 8px;
+  padding: 16px;
+  border-top: 3px solid var(--text-3);
+}
+.w2-metric-label {
+  font-size: 11px;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: 6px;
+}
+.w2-metric-val {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-0);
+  font-family: var(--mono);
+}
+.metric-primary { border-top-color: var(--accent); }
+.metric-success { border-top-color: var(--ok); }
+.metric-danger  { border-top-color: var(--err); }
+.metric-warn    { border-top-color: var(--warn); }
+.metric-info    { border-top-color: var(--text-2); }
+
+/* 脱敏对比 */
+.w2-masking-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.w2-mask-col {
+  background: var(--bg-1);
+  border-radius: 8px;
+  padding: 12px;
+  border-top: 3px solid var(--text-3);
+}
+.role-admin { border-top-color: var(--ok); }
+.role-customer_viewer { border-top-color: var(--warn); }
+.role-support { border-top-color: var(--err); }
+.w2-mask-role {
+  font-weight: 700;
+  font-size: 12px;
+  margin-bottom: 8px;
+  letter-spacing: .04em;
+}
+.w2-mask-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border-0);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.w2-mask-row:last-child { border-bottom: 0; }
+.w2-mask-label { color: var(--text-2); }
+.w2-mask-val { color: var(--text-0); word-break: break-all; text-align: right; }
+.w2-mask-row.masked .w2-mask-val { color: var(--warn); }
+.w2-mask-row.clear .w2-mask-val { color: var(--ok); }
+
+/* 审计时间轴 */
+.w2-audit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.w2-audit-item {
+  display: grid;
+  grid-template-columns: 60px 140px 200px 120px 80px 80px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--bg-1);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.w2-audit-ts { color: var(--text-2); font-size: 11px; }
+.w2-audit-actor { display: inline-block; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 600; background: var(--bg-2); color: var(--text-1); }
+.role-admin .w2-audit-actor { background: rgba(46,204,113,.15); color: var(--ok); }
+.role-customer_viewer .w2-audit-actor { background: rgba(241,196,15,.15); color: var(--warn); }
+.role-support .w2-audit-actor, .role-anonymous .w2-audit-actor { background: rgba(231,76,60,.15); color: var(--err); }
+.w2-audit-action { color: var(--text-1); }
+.w2-audit-resource code { font-size: 11px; color: var(--accent); }
+.chip-success { background: rgba(46,204,113,.15); color: var(--ok); }
+.chip-fail { background: rgba(231,76,60,.15); color: var(--err); }
+
+/* 通用 chip */
+.chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--mono);
+  letter-spacing: .04em;
+}
+.chip-level { background: rgba(127,140,141,.2); color: var(--text-1); }
+.risk-high { background: rgba(231,76,60,.15); color: var(--err); }
+.risk-medium { background: rgba(241,196,15,.15); color: var(--warn); }
+.risk-low { background: rgba(46,204,113,.15); color: var(--ok); }
+.risk-unknown { background: rgba(127,140,141,.2); color: var(--text-2); }
+
+/* 原始 JSON */
+.w2-raw {
+  background: var(--bg-1);
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.w2-raw summary {
+  cursor: pointer;
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+.w2-raw pre {
+  margin: 0;
+  font-family: var(--mono);
+  color: var(--text-1);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
