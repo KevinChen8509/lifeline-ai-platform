@@ -1,0 +1,34 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: data-service
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+# Cube.dev 语义层连接
+cube:
+  host: ${CUBE_HOST:localhost}
+  port: ${CUBE_PORT:4000}
+  api-secret: ${CUBEJS_API_SECRET:datafabric-poc-secret-2026}
+  timeout-ms: ${CUBE_TIMEOUT_MS:10000}
+
+# Actuator 端点（health / info / metrics）
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.datafabric: INFO
+    org.springframework.web.client: WARN
+  pattern:
+    console: "%clr(%d{HH:mm:ss.SSS}){faint} %clr(%-5level) %clr([%thread]){faint} %clr(%logger{36}) - %msg%n"

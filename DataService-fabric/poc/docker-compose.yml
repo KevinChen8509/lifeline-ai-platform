@@ -1,6 +1,6 @@
-# Data Fabric 数据服务 PoC - Week 1 编排
-# 7 个服务：mysql(源A) + clickhouse(源B) + postgres(源C) + trino(虚拟层)
-#          + opensearch + openmetadata-mysql + openmetadata(元数据平台)
+# Data Fabric 数据服务 PoC - Week 2 编排
+# Week 1 基线：mysql + clickhouse + postgres + trino + opensearch + openmetadata-mysql + openmetadata
+# Week 2 新增：cube（语义层，端口 4000）+ data-service（数据服务，端口 8090）
 #
 # 启动: docker compose up -d
 # 停止: docker compose down
@@ -122,6 +122,72 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
+    networks: [datafabric]
+
+  # ===================================================================
+  # 语义层: Cube.dev（Headless BI，业务对象 + 指标 API）
+  # 数据源 = Trino（透明下推跨源 JOIN，复用 Week 1 虚拟数据层）
+  # ===================================================================
+  cube:
+    image: cubeapi/cube:v0.36.5
+    container_name: dfp-cube
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      CUBEJS_DEV_MODE: "true"
+      CUBEJS_API_SECRET: ${CUBEJS_API_SECRET:-datafabric-poc-secret-2026}
+      CUBEJS_DB_TYPE: trino
+      CUBEJS_DB_HOST: trino
+      CUBEJS_DB_PORT: "8080"
+      CUBEJS_DB_USER: default
+      CUBEJS_DB_NAME: mysql
+      CUBEJS_DB_SCHEMA: customer_db
+      CUBEJS_API_PORT: "4000"
+      CUBEJS_LOG_LEVEL: info
+    volumes:
+      - ./cube/conf/config.js:/cube/conf/config.js:ro
+      - ./cube/schema:/cube/conf/schema:ro
+    ports:
+      - "4000:4000"
+    depends_on:
+      trino:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:4000/"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks: [datafabric]
+
+  # ===================================================================
+  # 数据服务层: Spring Boot（封装 Cube.dev 为 /api/v1/* 契约）
+  # 端口 8090，对外 API：/api/v1/customers/* /api/v1/metrics/*
+  # ===================================================================
+  data-service:
+    build:
+      context: ./data-service
+      dockerfile: Dockerfile
+    image: datafabric/data-service:0.1.0-SNAPSHOT
+    container_name: dfp-data-service
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      CUBE_HOST: cube
+      CUBE_PORT: "4000"
+      CUBEJS_API_SECRET: ${CUBEJS_API_SECRET:-datafabric-poc-secret-2026}
+      CUBE_TIMEOUT_MS: "10000"
+    ports:
+      - "8090:8090"
+    depends_on:
+      cube:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8090/actuator/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
     networks: [datafabric]
 
   # ===================================================================
