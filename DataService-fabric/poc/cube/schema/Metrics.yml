@@ -1,0 +1,60 @@
+# CustomerMetrics 指标层
+# 复用 CustomerProfile 的 SQL，定义衍生业务指标：
+#   - ARPU                客单价（总收入 / 客户数）
+#   - vipCustomerCount    VIP3 客户数
+#   - highRiskCustomerCount 高风险客户数
+#
+# 指标口径由语义层统一定义，所有下游消费方（API / AI Agent）共享单一真相源。
+
+cubes:
+  - name: CustomerMetrics
+    sql: "{CustomerProfile.sql}"
+
+    measures:
+      - name: arpu
+        sql: "{CustomerProfile.totalRevenue} / NULLIF({CustomerProfile.customerCount}, 0)"
+        type: number
+        format: currency
+        description: ARPU 客单价（总金额 / 客户数）
+
+      - name: vipCustomerCount
+        type: count
+        filters:
+          - member: CustomerProfile.customerLevel
+            operator: equals
+            values:
+              - VIP3
+        description: VIP3 等级客户数
+
+      - name: highRiskCustomerCount
+        type: count
+        filters:
+          - member: CustomerProfile.riskLevel
+            operator: equals
+            values:
+              - high
+        description: 高风险等级客户数
+
+      - name: mediumRiskCustomerCount
+        type: count
+        filters:
+          - member: CustomerProfile.riskLevel
+            operator: equals
+            values:
+              - medium
+        description: 中风险客户数
+
+      - name: lowRiskCustomerCount
+        type: count
+        filters:
+          - member: CustomerProfile.riskLevel
+            operator: equals
+            values:
+              - low
+        description: 低风险客户数
+
+    dimensions:
+      - name: snapshotDate
+        sql: "CURRENT_DATE"
+        type: time
+        description: 指标快照日期

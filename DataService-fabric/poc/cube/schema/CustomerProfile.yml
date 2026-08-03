@@ -1,0 +1,116 @@
+# CustomerProfile 业务对象
+# 跨源 JOIN 定义（对齐 PoC 实际拓扑，非设计文档 csv.risk_tags）：
+#   - mysql.customer_db.customer           （客户主数据）
+#   - clickhouse.analytics.orders          （订单行为聚合）
+#   - postgres.external.risk_tags          （风险标签）
+#
+# Cube.dev 通过 Trino 透明下推，业务消费方不感知数据源分布。
+
+cubes:
+  - name: CustomerProfile
+    sql: >
+      SELECT
+        c.cust_id,
+        c.cust_name,
+        c.phone,
+        c.id_card,
+        c.cust_level,
+        c.region,
+        c.register_time,
+        o.total_orders,
+        o.total_amount,
+        o.last_order_time,
+        r.risk_score,
+        r.risk_level
+      FROM mysql.customer_db.customer c
+      LEFT JOIN (
+        SELECT
+          cust_id,
+          count(*)        AS total_orders,
+          sum(order_amount) AS total_amount,
+          max(order_time)   AS last_order_time
+        FROM clickhouse.analytics.orders
+        GROUP BY cust_id
+      ) o ON c.cust_id = o.cust_id
+      LEFT JOIN postgres.external.risk_tags r
+        ON c.cust_id = r.cust_id
+
+    measures:
+      - name: customerCount
+        type: count
+        description: 客户总数
+
+      - name: totalRevenue
+        sql: total_amount
+        type: sum
+        format: currency
+        description: 全部客户订单总金额
+
+      - name: avgOrdersPerCustomer
+        sql: "{CUBE.total_orders} / NULLIF(COUNT(*), 0)"
+        type: number
+        description: 客均订单数
+
+    dimensions:
+      - name: custId
+        sql: cust_id
+        type: string
+        primaryKey: true
+        description: 客户唯一标识
+
+      - name: custName
+        sql: cust_name
+        type: string
+
+      - name: phone
+        sql: phone
+        type: string
+        description: 手机号（治理层自动脱敏，见 DataMaskingInterceptor）
+
+      - name: idCard
+        sql: id_card
+        type: string
+        description: 身份证号（治理层自动脱敏）
+
+      - name: customerLevel
+        sql: cust_level
+        type: string
+        description: 客户等级（VIP1/VIP2/VIP3/普通）
+
+      - name: region
+        sql: region
+        type: string
+
+      - name: riskLevel
+        sql: risk_level
+        type: string
+        description: 风险等级（low/medium/high）
+
+      - name: riskScore
+        sql: risk_score
+        type: number
+
+      - name: totalOrders
+        sql: total_orders
+        type: number
+
+      - name: registerTime
+        sql: register_time
+        type: time
+        description: 注册时间
+
+      - name: lastOrderTime
+        sql: last_order_time
+        type: time
+
+    pre_aggregations:
+      - name: customer_rollup
+        measures:
+          - customerCount
+          - totalRevenue
+        dimensions:
+          - customerLevel
+          - region
+        refresh_key:
+          every: 1 hour
+        description: 按等级×地区预聚合，加速分群查询
