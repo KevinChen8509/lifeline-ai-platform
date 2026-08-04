@@ -8,6 +8,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * 数据脱敏切面 - 拦截 @GetProfile 方法
  *
@@ -37,19 +40,46 @@ public class DataMaskingAspect {
     @Around("@annotation(getProfile)")
     public Object applyPolicy(ProceedingJoinPoint pjp, GetProfile getProfile) throws Throwable {
         Object result = pjp.proceed();
-        if (!(result instanceof CustomerProfileDto dto)) {
-            return result;
-        }
         String role = StubMetadataClient.currentRole();
-        FieldPolicy policy = metadata.getPolicy(dto.custId(), role);
+        String view = getProfile.view();
 
-        CustomerProfileDto masked = apply(dto, policy, getProfile.view());
+        // B1 修复：search 路由返回 List<CustomerProfileDto>，也要逐个脱敏
+        if (result instanceof List<?> list) {
+            List<CustomerProfileDto> masked = new ArrayList<>(list.size());
+            for (Object item : list) {
+                if (item instanceof CustomerProfileDto dto) {
+                    masked.add(applyOne(dto, role, view));
+                } else {
+                    // 类型混合的 List：原样保留，避免误伤
+                    maskedReturnOriginal(item, masked);
+                }
+            }
+            return masked;
+        }
+
+        if (result instanceof CustomerProfileDto dto) {
+            return applyOne(dto, role, view);
+        }
+        return result;
+    }
+
+    private CustomerProfileDto applyOne(CustomerProfileDto dto, String role, String view) {
+        FieldPolicy policy = metadata.getPolicy(dto.custId(), role);
         if (log.isDebugEnabled()) {
             log.debug("脱敏 view={} role={} custId={} maskPhone={} maskIdCard={} hideRisk={}",
-                    getProfile.view(), role, dto.custId(),
+                    view, role, dto.custId(),
                     policy.maskPhone(), policy.maskIdCard(), policy.hideRiskScore());
         }
-        return masked;
+        return apply(dto, policy, view);
+    }
+
+    /** 混合类型 List 的兜底（极少见，主要是 PoC 防御） */
+    @SuppressWarnings("unchecked")
+    private static void maskedReturnOriginal(Object item, List<CustomerProfileDto> target) {
+        if (item == null) return;
+        // 只放过 CustomerProfileDto，其他类型跳过（不丢、不脱敏）
+        // 如果出现其他类型，说明业务代码与治理切面契约不一致，应该报错
+        log.warn("List 中包含非 CustomerProfileDto 类型 {}，跳过脱敏", item.getClass().getName());
     }
 
     private CustomerProfileDto apply(CustomerProfileDto o, FieldPolicy p, String view) {

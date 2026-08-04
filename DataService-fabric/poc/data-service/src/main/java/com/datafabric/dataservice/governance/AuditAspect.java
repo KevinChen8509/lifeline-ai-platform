@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * 审计切面 - 每次 @GetProfile 方法成功返回后记录
@@ -36,10 +37,24 @@ public class AuditAspect {
             returning = "result"
     )
     public void record(JoinPoint jp, Object result) {
-        if (!(result instanceof CustomerProfileDto dto)) {
+        String actor = currentActor();
+
+        // B1 修复：search 返回 List<CustomerProfileDto>，每个 DTO 单独记一条审计
+        if (result instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof CustomerProfileDto dto) {
+                    logOne(actor, dto);
+                }
+            }
             return;
         }
-        String actor = currentActor();
+
+        if (result instanceof CustomerProfileDto dto) {
+            logOne(actor, dto);
+        }
+    }
+
+    private void logOne(String actor, CustomerProfileDto dto) {
         AuditEvent event = AuditEvent.of(
                 actor,
                 "customer-profile.read",

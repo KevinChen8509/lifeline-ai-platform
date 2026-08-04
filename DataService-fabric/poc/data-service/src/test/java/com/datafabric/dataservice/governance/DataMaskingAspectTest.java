@@ -9,6 +9,8 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -105,6 +107,61 @@ class DataMaskingAspectTest {
         when(pjp.proceed()).thenReturn("not a dto");
         Object result = aspect.applyPolicy(pjp, buildAnnotation("full"));
         assertEquals("not a dto", result);
+    }
+
+    // ============ B1 修复：List<CustomerProfileDto> 路径（search 路由） ============
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void list_search_applies_masking_per_item_for_support() throws Throwable {
+        mockRole("SUPPORT");
+        when(metadata.getPolicy(eq("C0001"), eq("SUPPORT"))).thenReturn(new FieldPolicy(true, true, true));
+        when(metadata.getPolicy(eq("C0002"), eq("SUPPORT"))).thenReturn(new FieldPolicy(true, true, true));
+
+        CustomerProfileDto c1 = new CustomerProfileDto(
+                "C0001", "李娜", "13800000001", "110101199001011234",
+                "VIP3", "华东", 42L, 128000.0, "high", 88,
+                "2023-01-15 10:30:00", "2026-07-20 14:00:00");
+        CustomerProfileDto c2 = new CustomerProfileDto(
+                "C0002", "张伟", "13900004321", "320102198503154321",
+                "VIP3", "华南", 5L, 95000.0, "medium", 60,
+                "2023-05-22 09:00:00", "2026-07-25 11:30:00");
+        when(pjp.proceed()).thenReturn(List.of(c1, c2));
+
+        List<CustomerProfileDto> result = (List<CustomerProfileDto>) aspect.applyPolicy(pjp, buildAnnotation("full"));
+
+        assertEquals(2, result.size(), "List 长度不变");
+        assertEquals("138****0001", result.get(0).phone(), "List[0] phone 脱敏");
+        assertEquals("110101********1234", result.get(0).idCard(), "List[0] idCard 脱敏");
+        assertNull(result.get(0).riskScore(), "List[0] riskScore 隐藏");
+        assertEquals("139****4321", result.get(1).phone(), "List[1] phone 脱敏");
+        assertEquals("320102********4321", result.get(1).idCard(), "List[1] idCard 脱敏");
+        assertNull(result.get(1).riskScore(), "List[1] riskScore 隐藏");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void list_search_no_masking_for_admin() throws Throwable {
+        mockRole("ADMIN");
+        when(metadata.getPolicy(anyString(), eq("ADMIN"))).thenReturn(FieldPolicy.none());
+
+        CustomerProfileDto c1 = new CustomerProfileDto(
+                "C0001", "李娜", "13800000001", "110101199001011234",
+                "VIP3", "华东", 42L, 128000.0, "high", 88,
+                "2023-01-15 10:30:00", "2026-07-20 14:00:00");
+        when(pjp.proceed()).thenReturn(List.of(c1));
+
+        List<CustomerProfileDto> result = (List<CustomerProfileDto>) aspect.applyPolicy(pjp, buildAnnotation("full"));
+
+        assertEquals("13800000001", result.get(0).phone(), "ADMIN List 不脱敏");
+        assertEquals(88, result.get(0).riskScore(), "ADMIN List riskScore 可见");
+    }
+
+    @Test
+    void empty_list_returned_unchanged() throws Throwable {
+        when(pjp.proceed()).thenReturn(List.of());
+        Object result = aspect.applyPolicy(pjp, buildAnnotation("full"));
+        assertEquals(List.of(), result);
     }
 
     private GetProfile buildAnnotation(String view) {

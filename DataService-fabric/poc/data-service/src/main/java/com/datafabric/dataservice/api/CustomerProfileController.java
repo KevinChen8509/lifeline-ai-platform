@@ -62,6 +62,7 @@ public class CustomerProfileController {
 
     /** 客户分群查询（按等级过滤、分页） */
     @GetMapping("/customers")
+    @GetProfile(view = "full")
     public List<CustomerProfileDto> searchCustomers(
             @RequestParam(required = false) String level,
             @RequestParam(defaultValue = "0") int page,

@@ -36,6 +36,20 @@ public class LineageAspect {
             returning = "result"
     )
     public void emit(JoinPoint jp, Object result) {
+        // B1 修复：search 返回 List<CustomerProfileDto>，发一个聚合 lineage 事件
+        if (result instanceof List<?> list) {
+            List<String> custIds = list.stream()
+                    .filter(item -> item instanceof CustomerProfileDto)
+                    .map(item -> ((CustomerProfileDto) item).custId())
+                    .toList();
+            if (custIds.isEmpty()) return;
+            log.info(
+                    "OPENLINEAGE job=data-service profile.search count={} custIds={} runId={} inputs={} outputs=[data-service.CustomerProfile]",
+                    custIds.size(), custIds, java.util.UUID.randomUUID(), UPSTREAM
+            );
+            return;
+        }
+
         if (!(result instanceof CustomerProfileDto dto)) {
             return;
         }
