@@ -29,6 +29,14 @@ venv/
 .coverage
 .pytest_cache/
 
+# ---- Java / Maven ----
+target/
+.m2-cache/
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+hs_err_pid*.log
+
 # ---- IDE / Editor ----
 .idea/
 .vscode/
