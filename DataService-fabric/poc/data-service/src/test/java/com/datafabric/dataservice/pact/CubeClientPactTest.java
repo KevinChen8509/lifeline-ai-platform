@@ -1,8 +1,9 @@
 package com.datafabric.dataservice.pact;
 
-import au.com.dius.pact.consumer.dsl.PactDslWithEntity;
+import au.com.dius.pact.consumer.dsl.PactDslWithProvider;
 import au.com.dius.pact.consumer.junit5.PactConsumerTestExt;
 import au.com.dius.pact.consumer.junit5.PactTestFor;
+import au.com.dius.pact.core.model.PactSpecVersion;
 import au.com.dius.pact.core.model.RequestResponsePact;
 import au.com.dius.pact.core.model.annotations.Pact;
 import com.datafabric.dataservice.client.CubeClient;
@@ -28,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
  * PoC 只做 consumer 端，pact JSON 输出到 target/pacts/。
  */
 @ExtendWith(PactConsumerTestExt.class)
-@PactTestFor(providerName = "cube-dev", port = "8888")
+@PactTestFor(providerName = "cube-dev", port = "8888", pactVersion = PactSpecVersion.V3)
 class CubeClientPactTest {
 
     private static final String AUTH_HEADER_REGEX = "Bearer .+";
@@ -41,7 +42,7 @@ class CubeClientPactTest {
     // ============ 场景 1：customerCount 单 measure 查询 ============
 
     @Pact(consumer = "data-service")
-    RequestResponsePact customerCountPact(PactDslWithEntity builder) {
+    RequestResponsePact customerCountPact(PactDslWithProvider builder) {
         return builder
                 .given("customer 表已加载 1000 行")
                 .uponReceiving("查询客户总数（customerCount）")
@@ -91,7 +92,7 @@ class CubeClientPactTest {
     // ============ 场景 2：单客户 360° 画像 ============
 
     @Pact(consumer = "data-service")
-    RequestResponsePact customerProfilePact(PactDslWithEntity builder) {
+    RequestResponsePact customerProfilePact(PactDslWithProvider builder) {
         return builder
                 .given("客户 C0001 存在，跨源 JOIN 完整")
                 .uponReceiving("查询单客户画像（custId 过滤）")
@@ -124,6 +125,7 @@ class CubeClientPactTest {
                         """)
                 .willRespondWith()
                 .status(200)
+                .matchHeader("Content-Type", "application/json")
                 .body("""
                         {
                           "data": [
@@ -170,7 +172,7 @@ class CubeClientPactTest {
     // ============ 场景 3：VIP3 客户分群查询 ============
 
     @Pact(consumer = "data-service")
-    RequestResponsePact vip3SearchPact(PactDslWithEntity builder) {
+    RequestResponsePact vip3SearchPact(PactDslWithProvider builder) {
         return builder
                 .given("VIP3 客户分群数据存在")
                 .uponReceiving("查询 VIP3 客户列表（分页 size=5）")
@@ -197,6 +199,7 @@ class CubeClientPactTest {
                         """)
                 .willRespondWith()
                 .status(200)
+                .matchHeader("Content-Type", "application/json")
                 .body("""
                         {
                           "data": [
@@ -230,7 +233,7 @@ class CubeClientPactTest {
     // ============ 场景 4：全局指标快照 ============
 
     @Pact(consumer = "data-service")
-    RequestResponsePact metricsOverviewPact(PactDslWithEntity builder) {
+    RequestResponsePact metricsOverviewPact(PactDslWithProvider builder) {
         return builder
                 .given("CustomerMetrics cube 加载完成")
                 .uponReceiving("查询全局客户指标快照（ARPU / VIP3 / 风险分布）")
@@ -252,6 +255,7 @@ class CubeClientPactTest {
                         """)
                 .willRespondWith()
                 .status(200)
+                .matchHeader("Content-Type", "application/json")
                 .body("""
                         {
                           "data": [
