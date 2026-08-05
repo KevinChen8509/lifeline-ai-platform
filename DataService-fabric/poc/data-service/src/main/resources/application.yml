@@ -16,7 +16,13 @@ cube:
   api-secret: ${CUBEJS_API_SECRET:datafabric-poc-secret-2026}
   timeout-ms: ${CUBE_TIMEOUT_MS:10000}
 
-# Actuator 端点（health / info / metrics）
+# B2 鉴权（PoC 单一共享 API Key；生产换 Keycloak）
+datafabric:
+  security:
+    api-key: ${DATAFABRIC_API_KEY:datafabric-poc-api-key-2026-please-rotate}
+    min-key-length: 16
+
+# Actuator 端点（health 不鉴权；show-details 改 when_authorized 防泄漏）
 management:
   endpoints:
     web:
@@ -24,7 +30,7 @@ management:
         include: health,info,metrics
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized
 
 logging:
   level:

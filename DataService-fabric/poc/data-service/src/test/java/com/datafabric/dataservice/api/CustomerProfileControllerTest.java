@@ -1,5 +1,6 @@
 package com.datafabric.dataservice.api;
 
+import com.datafabric.dataservice.config.SecurityConfig;
 import com.datafabric.dataservice.domain.CustomerOverviewDto;
 import com.datafabric.dataservice.domain.CustomerProfileDto;
 import com.datafabric.dataservice.domain.CustomerProfileService;
@@ -9,7 +10,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.web.client.RestClientException;
 
 import java.util.List;
@@ -27,13 +30,24 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@TestPropertySource(properties = {
+        "datafabric.security.api-key=test-api-key-fixed-for-ci"
+})
 class CustomerProfileControllerTest {
+
+    /** 测试用的固定 API Key（覆盖 application.yml 默认值，避免 CI 环境变量缺失） */
+    private static final String TEST_API_KEY = "test-api-key-fixed-for-ci";
 
     @Autowired
     private MockMvc mockMvc;
 
     @MockBean
     private CustomerProfileService service;
+
+    /** 给请求加 X-API-Key 头（B2 鉴权要求） */
+    private static MockHttpServletRequestBuilder authed(MockHttpServletRequestBuilder builder) {
+        return builder.header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY);
+    }
 
     @Test
     void getProfile_returnsCustomer_whenFound() throws Exception {
@@ -44,7 +58,7 @@ class CustomerProfileControllerTest {
 
         when(service.findById(eq("C0001"))).thenReturn(Optional.of(dto));
 
-        mockMvc.perform(get("/api/v1/customers/C0001/profile"))
+        mockMvc.perform(authed(get("/api/v1/customers/C0001/profile")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.custId").value("C0001"))
                 .andExpect(jsonPath("$.custName").value("李娜"))
@@ -55,14 +69,14 @@ class CustomerProfileControllerTest {
     void getProfile_returns404_whenNotFound() throws Exception {
         when(service.findById(eq("UNKNOWN"))).thenReturn(Optional.empty());
 
-        mockMvc.perform(get("/api/v1/customers/UNKNOWN/profile"))
+        mockMvc.perform(authed(get("/api/v1/customers/UNKNOWN/profile")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("CUSTOMER_NOT_FOUND"));
     }
 
     @Test
     void searchCustomers_validatesSize() throws Exception {
-        mockMvc.perform(get("/api/v1/customers").param("size", "500"))
+        mockMvc.perform(authed(get("/api/v1/customers").param("size", "500")))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").value("BAD_REQUEST"));
     }
@@ -72,7 +86,7 @@ class CustomerProfileControllerTest {
         when(service.overview()).thenReturn(new CustomerOverviewDto(
                 3200.50, 50, 14, 21, 15));
 
-        mockMvc.perform(get("/api/v1/metrics/customer-overview"))
+        mockMvc.perform(authed(get("/api/v1/metrics/customer-overview")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.vipCustomerCount").value(50))
                 .andExpect(jsonPath("$.highRiskCustomerCount").value(14));
@@ -86,10 +100,10 @@ class CustomerProfileControllerTest {
                 null, null);
         when(service.search(eq("VIP3"), eq(0), eq(10))).thenReturn(List.of(dto));
 
-        mockMvc.perform(get("/api/v1/customers")
+        mockMvc.perform(authed(get("/api/v1/customers")
                         .param("level", "VIP3")
                         .param("page", "0")
-                        .param("size", "10"))
+                        .param("size", "10")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].custId").value("C0002"));
     }
@@ -103,7 +117,7 @@ class CustomerProfileControllerTest {
                 .thenThrow(new RestClientException(
                         "I/O error on GET request for \"http://cube:4000/cubejs-api/v1/load\": Connection refused"));
 
-        mockMvc.perform(get("/api/v1/customers/C0001/profile"))
+        mockMvc.perform(authed(get("/api/v1/customers/C0001/profile")))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.error").value("SEMANTIC_LAYER_UNAVAILABLE"))
                 // 关键断言：响应体里不得出现内部 host / port / 路径
@@ -119,7 +133,7 @@ class CustomerProfileControllerTest {
         when(service.overview())
                 .thenThrow(new RuntimeException("NullPointerException at com.datafabric.internal.CubeDriver.getRow(CubeDriver.java:128)"));
 
-        mockMvc.perform(get("/api/v1/metrics/customer-overview"))
+        mockMvc.perform(authed(get("/api/v1/metrics/customer-overview")))
                 .andExpect(status().isInternalServerError())
                 .andExpect(jsonPath("$.error").value("INTERNAL_ERROR"))
                 .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(
