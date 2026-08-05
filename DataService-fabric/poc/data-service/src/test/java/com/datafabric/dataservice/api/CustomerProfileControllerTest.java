@@ -10,6 +10,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.client.RestClientException;
 
 import java.util.List;
 import java.util.Optional;
@@ -91,5 +92,39 @@ class CustomerProfileControllerTest {
                         .param("size", "10"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].custId").value("C0002"));
+    }
+
+    // ---- B4：异常脱敏（502 / 500 不得泄漏内部 URL / driver / stacktrace 片段）----
+
+    @Test
+    void cubeDown_returnsGenericMessageWithoutInternalUrl() throws Exception {
+        // 真实 RestClientException 会含 "http://cube:4000/cubejs-api/v1/load?query=..."
+        when(service.findById(eq("C0001")))
+                .thenThrow(new RestClientException(
+                        "I/O error on GET request for \"http://cube:4000/cubejs-api/v1/load\": Connection refused"));
+
+        mockMvc.perform(get("/api/v1/customers/C0001/profile"))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.error").value("SEMANTIC_LAYER_UNAVAILABLE"))
+                // 关键断言：响应体里不得出现内部 host / port / 路径
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("cube:4000"))))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("http://"))));
+    }
+
+    @Test
+    void unexpectedException_returnsGenericMessageWithoutDetail() throws Exception {
+        // 模拟 NPE 携带内部细节
+        when(service.overview())
+                .thenThrow(new RuntimeException("NullPointerException at com.datafabric.internal.CubeDriver.getRow(CubeDriver.java:128)"));
+
+        mockMvc.perform(get("/api/v1/metrics/customer-overview"))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.error").value("INTERNAL_ERROR"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("CubeDriver"))))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString(".java:"))));
     }
 }
