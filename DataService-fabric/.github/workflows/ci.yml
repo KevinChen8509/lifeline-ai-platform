@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [datafabric-week*, master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  data-service-tests:
+    name: data-service / Maven test
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: poc/data-service
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Maven test
+        run: mvn test -B
+
+      - name: Upload surefire reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: poc/data-service/target/surefire-reports/*
+          if-no-files-found: ignore
+
+      - name: Upload Pact contracts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pact-contracts
+          path: poc/data-service/target/pacts/*
+          if-no-files-found: ignore
