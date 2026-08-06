@@ -1,10 +1,17 @@
-name: CI
+name: DataService-fabric CI
 
+# Workflow 文件必须在仓库根 .github/workflows/ 下，GitHub Actions 才会识别。
+# 本 repo 根是 E:/Agentic/，DataService-fabric 是其中一个子项目。
 on:
   push:
     branches: [datafabric-week*, master]
+    paths:
+      - 'DataService-fabric/poc/data-service/**'
+      - '.github/workflows/data-service-ci.yml'
   pull_request:
     branches: [master]
+    paths:
+      - 'DataService-fabric/poc/data-service/**'
 
 jobs:
   data-service-tests:
@@ -13,7 +20,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: poc/data-service
+        working-directory: DataService-fabric/poc/data-service
 
     steps:
       - name: Checkout
@@ -34,7 +41,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: surefire-reports
-          path: poc/data-service/target/surefire-reports/*
+          path: DataService-fabric/poc/data-service/target/surefire-reports/*
           if-no-files-found: ignore
 
       - name: Upload Pact contracts
@@ -42,5 +49,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pact-contracts
-          path: poc/data-service/target/pacts/*
+          path: DataService-fabric/poc/data-service/target/pacts/*
           if-no-files-found: ignore
