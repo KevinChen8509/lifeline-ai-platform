@@ -10,6 +10,9 @@ const DATA_SERVICE_URL = process.env.DATA_SERVICE_URL || 'http://localhost:8090'
 const CUBE_URL = process.env.CUBE_URL || 'http://localhost:4000';
 const CUBE_API_SECRET = process.env.CUBEJS_API_SECRET || 'datafabric-poc-secret-2026';
 const TRINO_URL = process.env.TRINO_URL || 'http://localhost:8080';
+// B2 鉴权：data-service 要求 X-API-Key；dashboard 作为后端代理持同一共享 key
+const DATA_SERVICE_API_KEY =
+  process.env.DATAFABRIC_API_KEY || 'datafabric-poc-api-key-2026-please-rotate';
 
 async function ping(name, url, { expect = 200, timeoutMs = 3000 } = {}) {
   const ctrl = new AbortController();
@@ -124,4 +127,44 @@ export async function fetchMaskingComparison(custId, view = 'full') {
     roles.map((role) => fetchProfile(custId, { role, view }))
   );
   return roles.map((role, i) => ({ role, ...results[i] }));
+}
+
+/**
+ * Week 3: 调用 data-service 的 Agent 端点（A 路 CustomerInsightAgent / B 路 RawDbAgent）。
+ * 携带 X-API-Key（B2 鉴权）。LLM 调用可能较慢，超时放宽到 60s。
+ */
+export async function askAgent(apiPath, question) {
+  const url = `${DATA_SERVICE_URL}${apiPath}`;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 60000);
+  const started = Date.now();
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': DATA_SERVICE_API_KEY,
+      },
+      body: JSON.stringify({ question }),
+      signal: ctrl.signal,
+    });
+    clearTimeout(t);
+    const body = await res.json();
+    return {
+      url,
+      http: res.status,
+      ok: res.ok,
+      elapsedMs: Date.now() - started,
+      data: body,
+    };
+  } catch (err) {
+    clearTimeout(t);
+    return {
+      url,
+      http: 0,
+      ok: false,
+      elapsedMs: Date.now() - started,
+      error: err.name === 'AbortError' ? 'timeout 60s' : err.message,
+    };
+  }
 }

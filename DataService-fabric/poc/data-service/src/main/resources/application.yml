@@ -21,6 +21,24 @@ datafabric:
   security:
     api-key: ${DATAFABRIC_API_KEY:datafabric-poc-api-key-2026-please-rotate}
     min-key-length: 16
+  llm:
+    base-url: ${LLM_BASE_URL:https://ark.cn-beijing.volces.com/api/v3}
+    # 测试 / dev 默认假 key；生产必须由 LLM_API_KEY 注入
+    api-key: ${LLM_API_KEY:dev-fake-key-please-set-LLM_API_KEY}
+    model: ${LLM_MODEL:ep-20260415090611-nhwrx}
+    temperature: 0.3
+    max-tokens: 2048
+    timeout-seconds: 30
+  raw-db:
+    mysql-url: ${MYSQL_URL:jdbc:mysql://localhost:3306/customer_db?useSSL=false&serverTimezone=UTC}
+    mysql-user: ${MYSQL_USER:root}
+    mysql-password: ${MYSQL_PASSWORD:poc123}
+    clickhouse-url: ${CH_URL:jdbc:ch://localhost:8123/default}
+    clickhouse-user: ${CH_USER:default}
+    clickhouse-password: ${CH_PASSWORD:}
+    postgres-url: ${PG_URL:jdbc:postgresql://localhost:5432/external}
+    postgres-user: ${PG_USER:postgres}
+    postgres-password: ${PG_PASSWORD:external123}
 
 # Actuator 端点（health 不鉴权；show-details 改 when_authorized 防泄漏）
 management:

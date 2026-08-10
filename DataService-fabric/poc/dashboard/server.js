@@ -10,12 +10,14 @@ import {
   fetchCustomers,
   fetchAudit,
   fetchMaskingComparison,
+  askAgent,
 } from './lib/data-service-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 const app = express();
 
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
 /** GET /api/health - Trino + 数据源可达性 */
@@ -139,6 +141,30 @@ app.get('/api/w2/masking-compare', async (req, res) => {
   const { custId = 'C0001', view = 'full' } = req.query;
   const result = await fetchMaskingComparison(custId, view);
   res.json({ custId, view, comparisons: result });
+});
+
+// ============================================================
+// Week 3 路由：AI Agent 对比（A 路治理 vs B 路直查）
+// ============================================================
+
+/** POST /api/w3/ask-fabric { question } → A 路：CustomerInsightAgent（走 /api/v1/* + 治理） */
+app.post('/api/w3/ask-fabric', async (req, res) => {
+  const question = req.body?.question;
+  if (!question || !question.trim()) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'question 不能为空' });
+  }
+  const result = await askAgent('/api/v1/agent/insight', question);
+  res.status(result.http >= 200 && result.http < 500 ? 200 : 502).json(result);
+});
+
+/** POST /api/w3/ask-raw { question } → B 路：RawDbAgent（直接 JDBC，无治理） */
+app.post('/api/w3/ask-raw', async (req, res) => {
+  const question = req.body?.question;
+  if (!question || !question.trim()) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'question 不能为空' });
+  }
+  const result = await askAgent('/api/v1/agent/raw', question);
+  res.status(result.http >= 200 && result.http < 500 ? 200 : 502).json(result);
 });
 
 app.listen(PORT, () => {
