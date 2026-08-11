@@ -2,9 +2,11 @@ package com.datafabric.dataservice.config;
 
 import com.datafabric.dataservice.agent.CustomerInsightAgent;
 import com.datafabric.dataservice.agent.CustomerInsightTools;
+import com.datafabric.dataservice.agent.ToolRegistrations;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.service.AiServices;
+import dev.langchain4j.service.tool.ToolExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -13,12 +15,16 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.util.Map;
+
+import dev.langchain4j.agent.tool.ToolSpecification;
 
 /**
  * W3 LangChain4j 配置
  *
  *  - ChatLanguageModel: OpenAI-兼容客户端（火山方舟 GLM 默认）
- *  - CustomerInsightAgent: @AiService，自动绑定 4 个 @Tool
+ *  - CustomerInsightAgent: AiServices.builder + 自定义 ToolExecutor map
+ *    （SanitizingToolExecutor 兜底 GLM-4.7 残缺 arguments）
  *
  * RawDbAgent 不在这里注册（避免误用），由 RawDbAgentConfig 单独管理。
  */
@@ -47,9 +53,11 @@ public class LangChainConfig {
             ChatLanguageModel model,
             CustomerInsightTools tools,
             RestClient dataServiceRestClient) {
+        Map<ToolSpecification, ToolExecutor> toolMap = ToolRegistrations.buildToolMap(tools);
+        log.info("CustomerInsightAgent 注册 {} 个工具（已包装 SanitizingToolExecutor）", toolMap.size());
         return AiServices.builder(CustomerInsightAgent.class)
                 .chatLanguageModel(model)
-                .tools(tools)
+                .tools(toolMap)
                 .build();
     }
 
@@ -69,3 +77,4 @@ public class LangChainConfig {
                 .build();
     }
 }
+
