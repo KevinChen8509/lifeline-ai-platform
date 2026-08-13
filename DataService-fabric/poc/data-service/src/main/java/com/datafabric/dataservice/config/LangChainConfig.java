@@ -3,7 +3,7 @@ package com.datafabric.dataservice.config;
 import com.datafabric.dataservice.agent.CustomerInsightAgent;
 import com.datafabric.dataservice.agent.CustomerInsightTools;
 import com.datafabric.dataservice.agent.ToolRegistrations;
-import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.tool.ToolExecutor;
@@ -22,7 +22,7 @@ import dev.langchain4j.agent.tool.ToolSpecification;
 /**
  * W3 LangChain4j 配置
  *
- *  - ChatLanguageModel: OpenAI-兼容客户端（火山方舟 GLM 默认）
+ *  - ChatModel: OpenAI-兼容客户端（火山方舟 GLM 默认）
  *  - CustomerInsightAgent: AiServices.builder + 自定义 ToolExecutor map
  *    （SanitizingToolExecutor 兜底 GLM-4.7 残缺 arguments）
  *
@@ -35,7 +35,7 @@ public class LangChainConfig {
     private static final Logger log = LoggerFactory.getLogger(LangChainConfig.class);
 
     @Bean
-    public ChatLanguageModel chatLanguageModel(LlmProperties props) {
+    public ChatModel chatModel(LlmProperties props) {
         log.info("LLM 初始化: baseUrl={}, model={}, temperature={}, maxTokens={}",
                 props.baseUrl(), props.model(), props.temperature(), props.maxTokens());
         return OpenAiChatModel.builder()
@@ -50,13 +50,13 @@ public class LangChainConfig {
 
     @Bean
     public CustomerInsightAgent customerInsightAgent(
-            ChatLanguageModel model,
+            ChatModel model,
             CustomerInsightTools tools,
             RestClient dataServiceRestClient) {
         Map<ToolSpecification, ToolExecutor> toolMap = ToolRegistrations.buildToolMap(tools);
         log.info("CustomerInsightAgent 注册 {} 个工具（已包装 SanitizingToolExecutor）", toolMap.size());
         return AiServices.builder(CustomerInsightAgent.class)
-                .chatLanguageModel(model)
+                .chatModel(model)
                 .tools(toolMap)
                 .build();
     }

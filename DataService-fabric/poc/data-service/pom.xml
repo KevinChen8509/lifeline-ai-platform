@@ -52,17 +52,17 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- W3: LangChain4j AI Agent（OpenAI-兼容客户端，火山方舟 GLM 等）
-             1.0.0 在 huaweicloud mirror 上 absent；0.36.2 是最新稳定 -->
+        <!-- W3: LangChain4j 1.0.0 stable（2025-05 发布）
+             不用 langchain4j-spring-boot-starter（仍 beta5），改用手写 LangChainConfig -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-spring-boot-starter</artifactId>
-            <version>0.36.2</version>
+            <artifactId>langchain4j</artifactId>
+            <version>1.0.0</version>
         </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-open-ai-spring-boot-starter</artifactId>
-            <version>0.36.2</version>
+            <artifactId>langchain4j-open-ai</artifactId>
+            <version>1.0.0</version>
         </dependency>
 
         <!-- W3 RawDbAgent: 直连 JDBC（对照组，刻意绕开治理） -->
