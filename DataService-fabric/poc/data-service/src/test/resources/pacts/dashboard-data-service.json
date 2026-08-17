@@ -1,0 +1,204 @@
+{
+  "consumer": {
+    "name": "dashboard"
+  },
+  "provider": {
+    "name": "data-service"
+  },
+  "interactions": [
+    {
+      "description": "A 路治理：带 API Key 查询客户洞察",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent/insight",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-API-Key": "test-api-key-fixed-for-ci"
+        },
+        "body": {
+          "question": "C0001 的客户画像是什幺"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "path": "fabric",
+          "requestId": "abcd1234",
+          "question": "C0001 的客户画像是什幺",
+          "answer": "契约桩回答",
+          "elapsedMs": 123
+        },
+        "matchingRules": {
+          "body": {
+            "$.requestId": {
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}"
+                }
+              ]
+            },
+            "$.answer": {
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.elapsedMs": {
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "B 路直查对照：带 API Key 查询原始库",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent/raw",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-API-Key": "test-api-key-fixed-for-ci"
+        },
+        "body": {
+          "question": "VIP3 客户有多少"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "path": "raw",
+          "requestId": "abcd1234",
+          "question": "VIP3 客户有多少",
+          "answer": "契约桩回答",
+          "elapsedMs": 123
+        },
+        "matchingRules": {
+          "body": {
+            "$.requestId": {
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9a-f]{8}"
+                }
+              ]
+            },
+            "$.answer": {
+              "matchers": [
+                {
+                  "match": "type"
+                }
+              ]
+            },
+            "$.elapsedMs": {
+              "matchers": [
+                {
+                  "match": "integer"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "鉴权失败：缺少 X-API-Key 返回 401 错误信封",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent/insight",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "question": "C0001 的客户画像是什幺"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "error": "UNAUTHENTICATED",
+          "message": "API key 缺失或无效"
+        }
+      }
+    },
+    {
+      "description": "入参校验失败：空 question 返回 400 错误信封",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agent/insight",
+        "headers": {
+          "Content-Type": "application/json",
+          "X-API-Key": "test-api-key-fixed-for-ci"
+        },
+        "body": {
+          "question": ""
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "error": "BAD_REQUEST",
+          "message": "question 不能为空",
+          "timestamp": "2026-08-17T00:00:00.000Z"
+        },
+        "matchingRules": {
+          "body": {
+            "$.timestamp": {
+              "matchers": [
+                {
+                  "match": "regex",
+                  "regex": "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "F9 追溯：未知 requestId 返回 404 错误信封",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agent/trace/ghost0000",
+        "headers": {
+          "X-API-Key": "test-api-key-fixed-for-ci"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "error": "TRACE_NOT_FOUND",
+          "message": "trace 不存在或已淘汰（内存仅保留最近 100 条）"
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "pactSpecification": {
+      "version": "3.0.0"
+    },
+    "pact-jvm": {
+      "version": "4.6.16"
+    }
+  }
+}
