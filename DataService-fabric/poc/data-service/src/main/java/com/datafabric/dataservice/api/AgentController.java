@@ -4,6 +4,9 @@ import com.datafabric.dataservice.agent.CustomerInsightAgent;
 import com.datafabric.dataservice.agent.CustomerInsightStreamAgent;
 import com.datafabric.dataservice.agent.RawDbAgent;
 import com.datafabric.dataservice.agent.RawDbStreamAgent;
+import com.datafabric.dataservice.governance.TraceContext;
+import com.datafabric.dataservice.governance.TraceEvent;
+import com.datafabric.dataservice.governance.TraceStore;
 import dev.langchain4j.service.TokenStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +18,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 
 /**
  * W3 AI Agent 对比端点
@@ -26,10 +31,13 @@ import java.util.Map;
  *   POST /api/v1/agent/insight/stream  → SseEmitter，逐 token 推送
  *   POST /api/v1/agent/raw/stream      → SseEmitter（对照）
  *
+ * F9 追溯：每个请求分配 requestId，响应/SSE done 事件回传；
+ *   GET /api/v1/agent/trace/{requestId} 查询完整治理链路。
+ *
  * SSE 事件 JSON：
- *   {"type":"token","content":"..."}   部分 token
- *   {"type":"done","elapsedMs":1234}   正常完成
- *   {"type":"error","message":"..."}   异常
+ *   {"type":"token","content":"..."}        部分 token
+ *   {"type":"done","elapsedMs":1234,"requestId":"..."}   正常完成
+ *   {"type":"error","message":"..."}        异常
  */
 @RestController
 @RequestMapping("/api/v1/agent")
@@ -42,67 +50,87 @@ public class AgentController {
     private final RawDbAgent rawDbAgent;
     private final CustomerInsightStreamAgent insightStreamAgent;
     private final RawDbStreamAgent rawStreamAgent;
+    private final TraceStore traceStore;
 
     public AgentController(
             CustomerInsightAgent insightAgent,
             RawDbAgent rawDbAgent,
             CustomerInsightStreamAgent insightStreamAgent,
-            RawDbStreamAgent rawStreamAgent) {
+            RawDbStreamAgent rawStreamAgent,
+            TraceStore traceStore) {
         this.insightAgent = insightAgent;
         this.rawDbAgent = rawDbAgent;
         this.insightStreamAgent = insightStreamAgent;
         this.rawStreamAgent = rawStreamAgent;
+        this.traceStore = traceStore;
     }
 
     @PostMapping("/insight")
     public Map<String, Object> insight(@RequestBody Map<String, String> body) {
         String question = requireQuestion(body);
-        log.info("Agent[insight] Q='{}'", question);
+        String requestId = newRequestId("fabric", question);
+        log.info("Agent[insight] requestId={} Q='{}'", requestId, question);
+        TraceContext.set(requestId);
         long t0 = System.currentTimeMillis();
         try {
             String answer = insightAgent.answer(question);
             long elapsed = System.currentTimeMillis() - t0;
+            finishTrace(requestId, "SUCCESS", elapsed);
             return Map.of(
                     "path", "fabric",
+                    "requestId", requestId,
                     "question", question,
-                    "answer", answer,
+                    // LLM 可能返回 null（如全部工具失败后空补全），Map.of 不容忍 null
+                    "answer", Objects.requireNonNullElse(answer, ""),
                     "elapsedMs", elapsed);
         } catch (Exception e) {
             log.error("Agent[insight] failed", e);
+            long elapsed = System.currentTimeMillis() - t0;
+            finishTrace(requestId, "FAILED", elapsed);
             return Map.of(
                     "path", "fabric",
+                    "requestId", requestId,
                     "question", question,
                     "error", e.getClass().getSimpleName(),
-                    "elapsedMs", System.currentTimeMillis() - t0);
+                    "elapsedMs", elapsed);
+        } finally {
+            TraceContext.clear();
         }
     }
 
     @PostMapping("/raw")
     public Map<String, Object> raw(@RequestBody Map<String, String> body) {
         String question = requireQuestion(body);
-        log.info("Agent[raw] Q='{}'", question);
+        String requestId = newRequestId("raw", question);
+        log.info("Agent[raw] requestId={} Q='{}'", requestId, question);
         long t0 = System.currentTimeMillis();
         try {
             String answer = rawDbAgent.answer(question);
             long elapsed = System.currentTimeMillis() - t0;
+            finishTrace(requestId, "SUCCESS", elapsed);
             return Map.of(
                     "path", "raw",
+                    "requestId", requestId,
                     "question", question,
-                    "answer", answer,
+                    "answer", Objects.requireNonNullElse(answer, ""),
                     "elapsedMs", elapsed);
         } catch (Exception e) {
             log.error("Agent[raw] failed", e);
+            long elapsed = System.currentTimeMillis() - t0;
+            finishTrace(requestId, "FAILED", elapsed);
             return Map.of(
                     "path", "raw",
+                    "requestId", requestId,
                     "question", question,
                     "error", e.getClass().getSimpleName(),
-                    "elapsedMs", System.currentTimeMillis() - t0);
+                    "elapsedMs", elapsed);
         }
     }
 
     /**
      * F5 流式端点（A 路治理）。
      * 返回 SseEmitter，Spring MVC 把回调里的 send 转成 SSE 帧。
+     * F9：request 级 trace（工具级 ThreadLocal 在流式回调线程不可见，见 TraceContext）。
      */
     @PostMapping(value = "/insight/stream")
     public SseEmitter insightStream(@RequestBody Map<String, String> body) {
@@ -129,6 +157,18 @@ public class AgentController {
         return q;
     }
 
+    private String newRequestId(String path, String question) {
+        String requestId = UUID.randomUUID().toString().substring(0, 8);
+        traceStore.start(requestId, path, question);
+        return requestId;
+    }
+
+    private void finishTrace(String requestId, String status, long elapsedMs) {
+        traceStore.add(requestId, TraceEvent.of("REQUEST", Map.of(
+                "status", status,
+                "elapsedMs", elapsedMs)));
+    }
+
     /**
      * 把 LangChain4j {@link TokenStream} 桥接到 Spring MVC {@link SseEmitter}。
      *
@@ -139,8 +179,12 @@ public class AgentController {
         SseEmitter emitter = new SseEmitter(DEFAULT_TIMEOUT_MS);
         final long t0 = System.currentTimeMillis();
         final String tag = "Agent[" + path + "/stream]";
+        final String requestId = newRequestId(path, question);
 
-        emitter.onTimeout(() -> log.warn("{} timeout", tag));
+        emitter.onTimeout(() -> {
+            log.warn("{} timeout", tag);
+            finishTrace(requestId, "TIMEOUT", System.currentTimeMillis() - t0);
+        });
         emitter.onError(ex -> log.warn("{} client disconnected: {}", tag, ex.toString()));
 
         stream
@@ -154,8 +198,10 @@ public class AgentController {
             })
             .onCompleteResponse(chatResponse -> {
                 long elapsed = System.currentTimeMillis() - t0;
+                finishTrace(requestId, "SUCCESS", elapsed);
                 try {
-                    emitter.send(SseEmitter.event().data(Map.of("type", "done", "elapsedMs", elapsed)));
+                    emitter.send(SseEmitter.event().data(Map.of(
+                            "type", "done", "elapsedMs", elapsed, "requestId", requestId)));
                     emitter.complete();
                     log.info("{} done in {}ms", tag, elapsed);
                 } catch (IOException e) {
@@ -165,6 +211,7 @@ public class AgentController {
             })
             .onError(err -> {
                 log.error("{} failed", tag, err);
+                finishTrace(requestId, "FAILED", System.currentTimeMillis() - t0);
                 try {
                     emitter.send(SseEmitter.event().data(Map.of(
                             "type", "error",

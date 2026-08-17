@@ -12,6 +12,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.Optional;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -91,5 +92,21 @@ class AgentControllerTest {
                         .contentType("application/json")
                         .content("{\"question\":\"任何问题\"}"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // --- F9 trace 追溯端点 ---
+
+    @Test
+    void trace_withoutApiKey_returns401() throws Exception {
+        mockMvc.perform(get("/api/v1/agent/trace/abcd1234"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void trace_unknownRequestId_returns404() throws Exception {
+        mockMvc.perform(get("/api/v1/agent/trace/ghost0000")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error").value("TRACE_NOT_FOUND"));
     }
 }
