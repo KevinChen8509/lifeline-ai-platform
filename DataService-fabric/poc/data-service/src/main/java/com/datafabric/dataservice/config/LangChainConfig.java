@@ -1,10 +1,13 @@
 package com.datafabric.dataservice.config;
 
 import com.datafabric.dataservice.agent.CustomerInsightAgent;
+import com.datafabric.dataservice.agent.CustomerInsightStreamAgent;
 import com.datafabric.dataservice.agent.CustomerInsightTools;
 import com.datafabric.dataservice.agent.ToolRegistrations;
 import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.service.tool.ToolExecutor;
 import org.slf4j.Logger;
@@ -57,6 +60,42 @@ public class LangChainConfig {
         log.info("CustomerInsightAgent 注册 {} 个工具（已包装 SanitizingToolExecutor）", toolMap.size());
         return AiServices.builder(CustomerInsightAgent.class)
                 .chatModel(model)
+                .tools(toolMap)
+                .build();
+    }
+
+    /**
+     * F5 流式模型 bean（独立于 {@link #chatModel}）。
+     *
+     * 流式与同步分别构造，原因：OpenAI 兼容协议 stream=true 与 stream=false 是两个 HTTP 路径，
+     * 同一个 model 实例不应承担两种角色。
+     */
+    @Bean
+    public StreamingChatModel streamingChatModel(LlmProperties props) {
+        log.info("LLM 流式初始化: baseUrl={}, model={}", props.baseUrl(), props.model());
+        return OpenAiStreamingChatModel.builder()
+                .baseUrl(props.baseUrl())
+                .apiKey(props.apiKey())
+                .modelName(props.model())
+                .temperature(props.temperature())
+                .maxTokens(props.maxTokens())
+                .timeout(Duration.ofSeconds(props.timeoutSeconds()))
+                .build();
+    }
+
+    /**
+     * F5 流式版 A 路 agent。
+     * 复用 CustomerInsightTools（同一份治理三切面），返回 TokenStream。
+     */
+    @Bean
+    public CustomerInsightStreamAgent customerInsightStreamAgent(
+            StreamingChatModel streamingModel,
+            CustomerInsightTools tools,
+            RestClient dataServiceRestClient) {
+        Map<ToolSpecification, ToolExecutor> toolMap = ToolRegistrations.buildToolMap(tools);
+        log.info("CustomerInsightStreamAgent 注册 {} 个工具（已包装 SanitizingToolExecutor）", toolMap.size());
+        return AiServices.builder(CustomerInsightStreamAgent.class)
+                .streamingChatModel(streamingModel)
                 .tools(toolMap)
                 .build();
     }

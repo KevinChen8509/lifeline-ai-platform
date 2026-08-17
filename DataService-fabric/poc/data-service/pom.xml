@@ -52,17 +52,19 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- W3: LangChain4j 1.0.0 stable（2025-05 发布）
-             不用 langchain4j-spring-boot-starter（仍 beta5），改用手写 LangChainConfig -->
+        <!-- W3+F5: LangChain4j 1.18.1（1.0.0 → 1.18.1）
+             - 1.0.0 的 OpenAI 流式 Delta 不认 GLM-4.7 的 reasoning_content（Jackson 解析失败）
+             - 1.x 后续版本补齐 reasoning 模型支持；1.x 承诺 API 稳定
+             不用 langchain4j-spring-boot-starter（仍 beta），改用手写 LangChainConfig -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j</artifactId>
-            <version>1.0.0</version>
+            <version>1.18.1</version>
         </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-open-ai</artifactId>
-            <version>1.0.0</version>
+            <version>1.18.1</version>
         </dependency>
 
         <!-- W3 RawDbAgent: 直连 JDBC（对照组，刻意绕开治理） -->

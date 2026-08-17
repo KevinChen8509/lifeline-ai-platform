@@ -63,4 +63,33 @@ class AgentControllerTest {
                         .content("{\"question\":\"任何问题\"}"))
                 .andExpect(status().isUnauthorized());
     }
+
+    // --- F5 SSE 流式端点（鉴权 + 入参校验） ---
+    // 真实 token 流转由集成测试（curl + Ark API）覆盖；这里只覆盖 pre-stream 校验。
+
+    @Test
+    void insightStream_withoutApiKey_returns401() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/insight/stream")
+                        .contentType("application/json")
+                        .content("{\"question\":\"任何问题\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void insightStream_withApiKey_emptyQuestion_returns400() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/insight/stream")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType("application/json")
+                        .content("{\"question\":\"\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("BAD_REQUEST"));
+    }
+
+    @Test
+    void rawStream_withoutApiKey_returns401() throws Exception {
+        mockMvc.perform(post("/api/v1/agent/raw/stream")
+                        .contentType("application/json")
+                        .content("{\"question\":\"任何问题\"}"))
+                .andExpect(status().isUnauthorized());
+    }
 }
