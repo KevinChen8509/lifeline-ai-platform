@@ -5,6 +5,7 @@ import com.datafabric.dataservice.domain.CustomerProfileDto;
 import com.datafabric.dataservice.governance.TraceContext;
 import com.datafabric.dataservice.governance.TraceEvent;
 import com.datafabric.dataservice.governance.TraceStore;
+import com.datafabric.dataservice.observability.ToolCallLogger;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -37,10 +38,13 @@ public class CustomerInsightTools {
 
     private final RestClient client;
     private final TraceStore traceStore;
+    private final ToolCallLogger toolCallLogger;
 
-    public CustomerInsightTools(RestClient dataServiceRestClient, TraceStore traceStore) {
+    public CustomerInsightTools(RestClient dataServiceRestClient, TraceStore traceStore,
+                                ToolCallLogger toolCallLogger) {
         this.client = dataServiceRestClient;
         this.traceStore = traceStore;
+        this.toolCallLogger = toolCallLogger;
     }
 
     @Tool("根据客户 ID 查询单个客户的完整画像，包括姓名、等级、地区、订单数、总消费、风险等级、风险分。")
@@ -53,11 +57,11 @@ public class CustomerInsightTools {
                     .retrieve()
                     .body(CustomerProfileDto.class);
             recordToolCall("getCustomerProfile", Map.of("custId", custId),
-                    System.currentTimeMillis() - t0, true);
+                    System.currentTimeMillis() - t0, true, "rows=" + (dto == null ? 0 : 1));
             return JSON.writeValueAsString(dto);
         } catch (Exception e) {
             recordToolCall("getCustomerProfile", Map.of("custId", custId),
-                    System.currentTimeMillis() - t0, false);
+                    System.currentTimeMillis() - t0, false, "ERROR:" + e.getClass().getSimpleName());
             return "ERROR: " + e.getClass().getSimpleName() + " / " + sanitize(e.getMessage());
         }
     }
@@ -81,14 +85,14 @@ public class CustomerInsightTools {
             List<CustomerProfileDto> list = arr == null ? List.of() : Arrays.asList(arr);
             recordToolCall("searchCustomersByLevel",
                     Map.of("level", level, "page", page, "size", size),
-                    System.currentTimeMillis() - t0, true);
+                    System.currentTimeMillis() - t0, true, "rows=" + list.size());
             return JSON.writeValueAsString(Map.of(
                     "count", list.size(),
                     "customers", list));
         } catch (Exception e) {
             recordToolCall("searchCustomersByLevel",
                     Map.of("level", level, "page", page, "size", size),
-                    System.currentTimeMillis() - t0, false);
+                    System.currentTimeMillis() - t0, false, "ERROR:" + e.getClass().getSimpleName());
             return "ERROR: " + e.getClass().getSimpleName() + " / " + sanitize(e.getMessage());
         }
     }
@@ -103,11 +107,11 @@ public class CustomerInsightTools {
                     .retrieve()
                     .body(CustomerOverviewDto.class);
             recordToolCall("getCustomerMetrics", Map.of(),
-                    System.currentTimeMillis() - t0, true);
+                    System.currentTimeMillis() - t0, true, "ok");
             return JSON.writeValueAsString(dto);
         } catch (Exception e) {
             recordToolCall("getCustomerMetrics", Map.of(),
-                    System.currentTimeMillis() - t0, false);
+                    System.currentTimeMillis() - t0, false, "ERROR:" + e.getClass().getSimpleName());
             return "ERROR: " + e.getClass().getSimpleName() + " / " + sanitize(e.getMessage());
         }
     }
@@ -126,13 +130,13 @@ public class CustomerInsightTools {
             List<CustomerProfileDto> high = arr == null ? List.of() :
                     Arrays.stream(arr).filter(d -> "high".equalsIgnoreCase(d.riskLevel())).toList();
             recordToolCall("getHighRiskCustomers", Map.of(),
-                    System.currentTimeMillis() - t0, true);
+                    System.currentTimeMillis() - t0, true, "rows=" + high.size());
             return JSON.writeValueAsString(Map.of(
                     "count", high.size(),
                     "highRiskCustomers", high));
         } catch (Exception e) {
             recordToolCall("getHighRiskCustomers", Map.of(),
-                    System.currentTimeMillis() - t0, false);
+                    System.currentTimeMillis() - t0, false, "ERROR:" + e.getClass().getSimpleName());
             return "ERROR: " + e.getClass().getSimpleName() + " / " + sanitize(e.getMessage());
         }
     }
@@ -143,8 +147,13 @@ public class CustomerInsightTools {
         return requestId == null ? spec : spec.header(TraceContext.HEADER, requestId);
     }
 
-    /** F9：TOOL_CALL 事件入 TraceStore；非 Agent 上下文（requestId=null）忽略 */
-    private void recordToolCall(String tool, Map<String, Object> args, long elapsedMs, boolean ok) {
+    /**
+     * F2：全局工具调用日志（结构化 + 聚合，无 requestId 也记，如流式回调线程）。
+     * F9：requestId 存在时另记 TOOL_CALL 事件进 TraceStore（请求级时间线）。
+     */
+    private void recordToolCall(String tool, Map<String, Object> args,
+                                long elapsedMs, boolean ok, String summary) {
+        toolCallLogger.record("fabric", tool, args, elapsedMs, ok, summary);
         String requestId = TraceContext.currentRequestId();
         if (requestId == null) {
             return;

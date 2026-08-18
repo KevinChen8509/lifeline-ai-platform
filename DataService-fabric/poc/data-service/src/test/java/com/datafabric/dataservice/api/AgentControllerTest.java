@@ -2,6 +2,7 @@ package com.datafabric.dataservice.api;
 
 import com.datafabric.dataservice.config.SecurityConfig;
 import com.datafabric.dataservice.domain.CustomerProfileService;
+import com.datafabric.dataservice.observability.ToolCallLogger;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -38,6 +39,9 @@ class AgentControllerTest {
 
     @MockBean
     private CustomerProfileService service;
+
+    @Autowired
+    private ToolCallLogger toolCallLogger;
 
     @Test
     void insight_withoutApiKey_returns401() throws Exception {
@@ -129,5 +133,39 @@ class AgentControllerTest {
                 .andExpect(jsonPath("$.costEstimateCny.total").exists())
                 .andExpect(jsonPath("$.pricing.inputPerMillion").exists())
                 .andExpect(jsonPath("$.recent").isArray());
+    }
+
+    // --- F2 工具调用日志端点 ---
+
+    @Test
+    void toolCalls_withoutApiKey_returns401() throws Exception {
+        mockMvc.perform(get("/api/v1/agent/tool-calls"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void toolCalls_returnsByToolAggregateAndRecent() throws Exception {
+        toolCallLogger.record("fabric", "testTool", java.util.Map.of("custId", "C0001"),
+                12, true, "rows=1");
+
+        mockMvc.perform(get("/api/v1/agent/tool-calls")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.byTool.testTool.totalCalls").value(1))
+                .andExpect(jsonPath("$.byTool.testTool.failures").value(0))
+                .andExpect(jsonPath("$.byTool.testTool.avgElapsedMs").value(12))
+                .andExpect(jsonPath("$.recent[0].tool").value("testTool"))
+                .andExpect(jsonPath("$.recent[0].path").value("fabric"))
+                .andExpect(jsonPath("$.recent[0].ok").value(true))
+                .andExpect(jsonPath("$.filter.path").value("all"));
+    }
+
+    @Test
+    void toolCalls_invalidPath_returns400() throws Exception {
+        mockMvc.perform(get("/api/v1/agent/tool-calls")
+                        .queryParam("path", "fabric2")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("BAD_REQUEST"));
     }
 }
