@@ -4,12 +4,16 @@ import com.datafabric.dataservice.agent.CustomerInsightAgent;
 import com.datafabric.dataservice.agent.CustomerInsightStreamAgent;
 import com.datafabric.dataservice.agent.RawDbAgent;
 import com.datafabric.dataservice.agent.RawDbStreamAgent;
+import com.datafabric.dataservice.config.LlmProperties;
 import com.datafabric.dataservice.governance.TraceContext;
 import com.datafabric.dataservice.governance.TraceEvent;
 import com.datafabric.dataservice.governance.TraceStore;
+import com.datafabric.dataservice.observability.TokenUsageStore;
+import com.datafabric.dataservice.observability.UsageContext;
 import dev.langchain4j.service.TokenStream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -51,18 +55,24 @@ public class AgentController {
     private final CustomerInsightStreamAgent insightStreamAgent;
     private final RawDbStreamAgent rawStreamAgent;
     private final TraceStore traceStore;
+    private final TokenUsageStore tokenUsageStore;
+    private final LlmProperties llmProperties;
 
     public AgentController(
             CustomerInsightAgent insightAgent,
             RawDbAgent rawDbAgent,
             CustomerInsightStreamAgent insightStreamAgent,
             RawDbStreamAgent rawStreamAgent,
-            TraceStore traceStore) {
+            TraceStore traceStore,
+            TokenUsageStore tokenUsageStore,
+            LlmProperties llmProperties) {
         this.insightAgent = insightAgent;
         this.rawDbAgent = rawDbAgent;
         this.insightStreamAgent = insightStreamAgent;
         this.rawStreamAgent = rawStreamAgent;
         this.traceStore = traceStore;
+        this.tokenUsageStore = tokenUsageStore;
+        this.llmProperties = llmProperties;
     }
 
     @PostMapping("/insight")
@@ -71,6 +81,7 @@ public class AgentController {
         String requestId = newRequestId("fabric", question);
         log.info("Agent[insight] requestId={} Q='{}'", requestId, question);
         TraceContext.set(requestId);
+        UsageContext.set("fabric", requestId);
         long t0 = System.currentTimeMillis();
         try {
             String answer = insightAgent.answer(question);
@@ -95,6 +106,7 @@ public class AgentController {
                     "elapsedMs", elapsed);
         } finally {
             TraceContext.clear();
+            UsageContext.clear();
         }
     }
 
@@ -103,6 +115,7 @@ public class AgentController {
         String question = requireQuestion(body);
         String requestId = newRequestId("raw", question);
         log.info("Agent[raw] requestId={} Q='{}'", requestId, question);
+        UsageContext.set("raw", requestId);
         long t0 = System.currentTimeMillis();
         try {
             String answer = rawDbAgent.answer(question);
@@ -124,6 +137,8 @@ public class AgentController {
                     "question", question,
                     "error", e.getClass().getSimpleName(),
                     "elapsedMs", elapsed);
+        } finally {
+            UsageContext.clear();
         }
     }
 
@@ -147,6 +162,14 @@ public class AgentController {
         String question = requireQuestion(body);
         log.info("Agent[raw/stream] Q='{}'", question);
         return startStream(rawStreamAgent.answer(question), "raw", question);
+    }
+
+    /**
+     * F6 Token 用量与成本快照：全局 + 分路径聚合 + 估算成本 + 最近调用。
+     */
+    @GetMapping("/usage")
+    public Map<String, Object> usage() {
+        return tokenUsageStore.snapshot(llmProperties);
     }
 
     private static String requireQuestion(Map<String, String> body) {
@@ -199,6 +222,8 @@ public class AgentController {
             .onCompleteResponse(chatResponse -> {
                 long elapsed = System.currentTimeMillis() - t0;
                 finishTrace(requestId, "SUCCESS", elapsed);
+                // F6: 流式路径用量在此记录（同步路径走 SyncTokenListener，互不双计）
+                tokenUsageStore.record(path, requestId, chatResponse.tokenUsage());
                 try {
                     emitter.send(SseEmitter.event().data(Map.of(
                             "type", "done", "elapsedMs", elapsed, "requestId", requestId)));

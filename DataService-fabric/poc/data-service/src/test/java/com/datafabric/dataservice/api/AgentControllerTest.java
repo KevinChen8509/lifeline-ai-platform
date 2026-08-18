@@ -109,4 +109,25 @@ class AgentControllerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error").value("TRACE_NOT_FOUND"));
     }
+
+    // --- F6 用量与成本端点 ---
+
+    @Test
+    void usage_withoutApiKey_returns401() throws Exception {
+        mockMvc.perform(get("/api/v1/agent/usage"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void usage_returnsTotalsAndPricingEnvelope() throws Exception {
+        mockMvc.perform(get("/api/v1/agent/usage")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totals").exists())
+                .andExpect(jsonPath("$.totals.llmCalls").exists())
+                .andExpect(jsonPath("$.byPath").exists())
+                .andExpect(jsonPath("$.costEstimateCny.total").exists())
+                .andExpect(jsonPath("$.pricing.inputPerMillion").exists())
+                .andExpect(jsonPath("$.recent").isArray());
+    }
 }

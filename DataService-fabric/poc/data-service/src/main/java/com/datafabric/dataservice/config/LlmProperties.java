@@ -34,11 +34,19 @@ public record LlmProperties(
         Integer maxTokens,
 
         /** 超时秒（默认 30） */
-        Integer timeoutSeconds
+        Integer timeoutSeconds,
+
+        /** F6 输入 token 估算单价（元 / 百万 token，默认 2.0） */
+        Double inputPricePerMillion,
+
+        /** F6 输出 token 估算单价（元 / 百万 token，默认 8.0） */
+        Double outputPricePerMillion
 ) {
     public LlmProperties {
         if (temperature == null) temperature = 0.3;
         if (maxTokens == null) maxTokens = 2048;
         if (timeoutSeconds == null) timeoutSeconds = 30;
+        if (inputPricePerMillion == null) inputPricePerMillion = 2.0;
+        if (outputPricePerMillion == null) outputPricePerMillion = 8.0;
     }
 }

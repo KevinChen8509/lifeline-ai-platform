@@ -4,6 +4,8 @@ import com.datafabric.dataservice.agent.CustomerInsightAgent;
 import com.datafabric.dataservice.agent.CustomerInsightStreamAgent;
 import com.datafabric.dataservice.agent.CustomerInsightTools;
 import com.datafabric.dataservice.agent.ToolRegistrations;
+import com.datafabric.dataservice.observability.SyncTokenListener;
+import com.datafabric.dataservice.observability.TokenUsageStore;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -38,7 +40,7 @@ public class LangChainConfig {
     private static final Logger log = LoggerFactory.getLogger(LangChainConfig.class);
 
     @Bean
-    public ChatModel chatModel(LlmProperties props) {
+    public ChatModel chatModel(LlmProperties props, TokenUsageStore tokenUsageStore) {
         log.info("LLM 初始化: baseUrl={}, model={}, temperature={}, maxTokens={}",
                 props.baseUrl(), props.model(), props.temperature(), props.maxTokens());
         return OpenAiChatModel.builder()
@@ -48,6 +50,8 @@ public class LangChainConfig {
                 .temperature(props.temperature())
                 .maxTokens(props.maxTokens())
                 .timeout(Duration.ofSeconds(props.timeoutSeconds()))
+                // F6: 同步路径用量采集（与 answer() 同线程，可读 UsageContext）
+                .listeners(new SyncTokenListener(tokenUsageStore))
                 .build();
     }
 
@@ -115,5 +119,7 @@ public class LangChainConfig {
                 .defaultHeader(SecurityConfig.HEADER_API_KEY, security.apiKey())
                 .build();
     }
+
+
 }
 
