@@ -16,6 +16,7 @@ import org.springframework.web.client.RestClient;
 
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -66,7 +67,7 @@ public class CustomerInsightTools {
         }
     }
 
-    @Tool("按客户等级（如 VIP1/VIP2/VIP3）分页查询客户列表。")
+    @Tool("按客户等级（如 VIP1/VIP2/VIP3）分页查询客户列表（精简字段）。")
     public String searchCustomersByLevel(
             @P("客户等级，如 VIP1、VIP2、VIP3") String level,
             @P("页码，从 0 开始") int page,
@@ -88,7 +89,7 @@ public class CustomerInsightTools {
                     System.currentTimeMillis() - t0, true, "rows=" + list.size());
             return JSON.writeValueAsString(Map.of(
                     "count", list.size(),
-                    "customers", list));
+                    "customers", list.stream().map(CustomerInsightTools::slim).toList()));
         } catch (Exception e) {
             recordToolCall("searchCustomersByLevel",
                     Map.of("level", level, "page", page, "size", size),
@@ -116,26 +117,36 @@ public class CustomerInsightTools {
         }
     }
 
-    @Tool("获取全部高风险客户列表（riskLevel=high）。")
-    public String getHighRiskCustomers() {
-        log.info("Tool[getHighRiskCustomers]");
+    /**
+     * F7：按风险等级查客户（服务端过滤）。
+     * 替代旧的 getHighRiskCustomers——那会拉 200 行全量画像再客户端过滤：
+     * 浪费 token、暴露面大、且客户数 >200 时静默截断漏数。
+     */
+    @Tool("按风险等级（high/medium/low）查询客户列表（服务端过滤，精简字段）。")
+    public String getCustomersByRisk(
+            @P("风险等级：high、medium 或 low") String riskLevel,
+            @P("返回条数上限，1-200") int limit) {
+        log.info("Tool[getCustomersByRisk] riskLevel={} limit={}", riskLevel, limit);
         long t0 = System.currentTimeMillis();
+        Map<String, Object> args = Map.of(
+                "riskLevel", riskLevel == null ? "" : riskLevel,
+                "limit", Math.max(1, Math.min(limit, 200)));
         try {
             CustomerProfileDto[] arr = withTrace(client.get()
                     .uri(uriBuilder -> uriBuilder.path("/api/v1/customers")
-                            .queryParam("size", 200)
+                            .queryParam("riskLevel", riskLevel)
+                            .queryParam("size", Math.max(1, Math.min(limit, 200)))
                             .build()))
                     .retrieve()
                     .body(CustomerProfileDto[].class);
-            List<CustomerProfileDto> high = arr == null ? List.of() :
-                    Arrays.stream(arr).filter(d -> "high".equalsIgnoreCase(d.riskLevel())).toList();
-            recordToolCall("getHighRiskCustomers", Map.of(),
-                    System.currentTimeMillis() - t0, true, "rows=" + high.size());
+            List<CustomerProfileDto> list = arr == null ? List.of() : Arrays.asList(arr);
+            recordToolCall("getCustomersByRisk", args,
+                    System.currentTimeMillis() - t0, true, "rows=" + list.size());
             return JSON.writeValueAsString(Map.of(
-                    "count", high.size(),
-                    "highRiskCustomers", high));
+                    "count", list.size(),
+                    "customers", list.stream().map(CustomerInsightTools::slim).toList()));
         } catch (Exception e) {
-            recordToolCall("getHighRiskCustomers", Map.of(),
+            recordToolCall("getCustomersByRisk", args,
                     System.currentTimeMillis() - t0, false, "ERROR:" + e.getClass().getSimpleName());
             return "ERROR: " + e.getClass().getSimpleName() + " / " + sanitize(e.getMessage());
         }
@@ -145,6 +156,23 @@ public class CustomerInsightTools {
     private RestClient.RequestHeadersSpec<?> withTrace(RestClient.RequestHeadersSpec<?> spec) {
         String requestId = TraceContext.currentRequestId();
         return requestId == null ? spec : spec.header(TraceContext.HEADER, requestId);
+    }
+
+    /**
+     * F7：列表类工具的精简投影。丢弃脱敏后无意义 / 列表场景无用的字段
+     * （phone、idCard、riskScore、registerTime、lastOrderTime），直接省 LLM token；
+     * 单客户画像工具仍返回全量（脱敏演示是 A 路的卖点）。
+     */
+    static Map<String, Object> slim(CustomerProfileDto d) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("custId", d.custId());
+        m.put("custName", d.custName());
+        m.put("customerLevel", d.customerLevel());
+        m.put("riskLevel", d.riskLevel());
+        m.put("region", d.region());
+        m.put("totalOrders", d.totalOrders());
+        m.put("totalAmount", d.totalAmount());
+        return m;
     }
 
     /**

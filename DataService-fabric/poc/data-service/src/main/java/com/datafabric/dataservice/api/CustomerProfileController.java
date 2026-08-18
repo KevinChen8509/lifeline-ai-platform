@@ -60,11 +60,12 @@ public class CustomerProfileController {
                 .orElseThrow(() -> new CustomerNotFoundException(custId));
     }
 
-    /** 客户分群查询（按等级过滤、分页） */
+    /** 客户分群查询（按等级 / 风险等级过滤、分页；F7：riskLevel 服务端过滤） */
     @GetMapping("/customers")
     @GetProfile(view = "full")
     public List<CustomerProfileDto> searchCustomers(
             @RequestParam(required = false) String level,
+            @RequestParam(required = false) String riskLevel,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         if (size < 1 || size > 200) {
@@ -73,7 +74,15 @@ public class CustomerProfileController {
         if (page < 0) {
             throw new IllegalArgumentException("page 不能为负");
         }
-        return service.search(level, page, size);
+        String normalizedRisk = null;
+        if (riskLevel != null && !riskLevel.isBlank()) {
+            normalizedRisk = riskLevel.trim().toLowerCase();
+            if (!"high".equals(normalizedRisk) && !"medium".equals(normalizedRisk)
+                    && !"low".equals(normalizedRisk)) {
+                throw new IllegalArgumentException("riskLevel 只支持 high / medium / low");
+            }
+        }
+        return service.search(level, normalizedRisk, page, size);
     }
 
     /** 全局客户指标快照（ARPU / VIP3 / 风险分布） */

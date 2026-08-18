@@ -47,13 +47,18 @@ public class CustomerProfileService {
         return rows.stream().findFirst().map(CustomerProfileService::toDto);
     }
 
-    /** 客户分群 - 按等级过滤、分页 */
-    public List<CustomerProfileDto> search(String level, int page, int size) {
+    /**
+     * 客户分群 - 按等级 / 风险等级过滤、分页
+     * F7：riskLevel 在 Cube 查询层过滤（服务端），替代 Agent 工具拉 200 行全量画像
+     * 再客户端过滤的旧法（浪费 token 且 >200 客户时截断漏数）。
+     */
+    public List<CustomerProfileDto> search(String level, String riskLevel, int page, int size) {
         CubeQuery.Builder b = CubeQuery.builder()
                 .dimension(CUBE + "custId")
                 .dimension(CUBE + "custName")
                 .dimension(CUBE + "customerLevel")
                 .dimension(CUBE + "region")
+                .dimension(CUBE + "riskLevel")
                 .dimension(CUBE + "totalOrders")
                 .measure(CUBE + "totalRevenue")
                 .order(CUBE + "totalRevenue", "desc")
@@ -61,6 +66,9 @@ public class CustomerProfileService {
                 .offset(page * size);
         if (level != null && !level.isBlank()) {
             b.filter(CUBE + "customerLevel", "equals", level);
+        }
+        if (riskLevel != null && !riskLevel.isBlank()) {
+            b.filter(CUBE + "riskLevel", "equals", riskLevel);
         }
         return cube.load(b.build()).stream()
                 .map(CustomerProfileService::toDto)

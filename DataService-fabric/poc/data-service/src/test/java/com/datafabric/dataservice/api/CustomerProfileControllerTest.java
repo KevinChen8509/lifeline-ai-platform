@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -98,7 +99,7 @@ class CustomerProfileControllerTest {
                 "C0002", "张伟", null, null,
                 "VIP3", "华东", 30L, 95000.0, "low", 25,
                 null, null);
-        when(service.search(eq("VIP3"), eq(0), eq(10))).thenReturn(List.of(dto));
+        when(service.search(eq("VIP3"), isNull(), eq(0), eq(10))).thenReturn(List.of(dto));
 
         mockMvc.perform(authed(get("/api/v1/customers")
                         .param("level", "VIP3")
@@ -106,6 +107,32 @@ class CustomerProfileControllerTest {
                         .param("size", "10")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].custId").value("C0002"));
+    }
+
+    // --- F7：riskLevel 服务端过滤 ---
+
+    @Test
+    void searchCustomers_riskLevelNormalizesAndDelegates() throws Exception {
+        CustomerProfileDto dto = new CustomerProfileDto(
+                "C0009", "王强", null, null,
+                "VIP2", "华南", 12L, 45000.0, "high", 90,
+                null, null);
+        when(service.search(isNull(), eq("high"), eq(0), eq(50))).thenReturn(List.of(dto));
+
+        mockMvc.perform(authed(get("/api/v1/customers")
+                        .param("riskLevel", "HIGH")
+                        .param("size", "50")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].riskLevel").value("high"))
+                .andExpect(jsonPath("$[0].custId").value("C0009"));
+    }
+
+    @Test
+    void searchCustomers_invalidRiskLevel_returns400() throws Exception {
+        mockMvc.perform(authed(get("/api/v1/customers")
+                        .param("riskLevel", "extreme")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("BAD_REQUEST"));
     }
 
     // ---- B4：异常脱敏（502 / 500 不得泄漏内部 URL / driver / stacktrace 片段）----
