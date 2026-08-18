@@ -85,6 +85,11 @@
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
+        <!-- F8 B 路连接池（版本由 Boot BOM 管理）；监控端点需要读取池状态，不能 runtime -->
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>
