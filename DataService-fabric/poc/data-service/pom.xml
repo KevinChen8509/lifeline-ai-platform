@@ -80,6 +80,16 @@
             <classifier>all</classifier>
             <scope>runtime</scope>
         </dependency>
+        <!-- F4 踩坑修复：all 分包被 minimizeJar 裁掉了 ClickHouseClient 接口，但
+             ClickHouseDriver.<clinit> 直接引用它 → 驱动"注册成功但初始化失败"，
+             DriverManager 队列里排在它之后的任何连接（含 B 路 CH 工具线上查询）全炸。
+             显式补接口所在包（重复类由 classpath 顺序遮蔽，无冲突）。 -->
+        <dependency>
+            <groupId>com.clickhouse</groupId>
+            <artifactId>clickhouse-client</artifactId>
+            <version>0.6.5</version>
+            <scope>runtime</scope>
+        </dependency>
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
@@ -89,6 +99,12 @@
         <dependency>
             <groupId>com.zaxxer</groupId>
             <artifactId>HikariCP</artifactId>
+        </dependency>
+        <!-- F4 红队注入对比测试：H2 MySQL 兼容模式替身（无需起真源 DB） -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
         </dependency>
 
         <dependency>
