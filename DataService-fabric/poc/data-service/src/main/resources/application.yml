@@ -39,6 +39,14 @@ datafabric:
     postgres-url: ${PG_URL:jdbc:postgresql://localhost:5432/external}
     postgres-user: ${PG_USER:postgres}
     postgres-password: ${PG_PASSWORD:external123}
+  # F3 A 路 RAG：OpenMetadata 表注释（离线自动降级为无上下文，不阻断 A 路）
+  openmetadata:
+    base-url: ${OPENMETADATA_URL:http://localhost:8585/api}
+    token: ${OPENMETADATA_TOKEN:}
+    rag-enabled: ${RAG_ENABLED:true}
+    cache-ttl-seconds: 300
+    top-k: 3
+    max-tables: 200
 
 # Actuator 端点（health 不鉴权；show-details 改 when_authorized 防泄漏）
 management:

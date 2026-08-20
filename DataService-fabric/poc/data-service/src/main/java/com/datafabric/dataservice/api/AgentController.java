@@ -8,6 +8,7 @@ import com.datafabric.dataservice.config.LlmProperties;
 import com.datafabric.dataservice.governance.TraceContext;
 import com.datafabric.dataservice.governance.TraceEvent;
 import com.datafabric.dataservice.governance.TraceStore;
+import com.datafabric.dataservice.metadata.MetadataContextService;
 import com.datafabric.dataservice.observability.TokenUsageStore;
 import com.datafabric.dataservice.observability.UsageContext;
 import dev.langchain4j.service.TokenStream;
@@ -57,6 +58,7 @@ public class AgentController {
     private final TraceStore traceStore;
     private final TokenUsageStore tokenUsageStore;
     private final LlmProperties llmProperties;
+    private final MetadataContextService metadataContextService;
 
     public AgentController(
             CustomerInsightAgent insightAgent,
@@ -65,7 +67,8 @@ public class AgentController {
             RawDbStreamAgent rawStreamAgent,
             TraceStore traceStore,
             TokenUsageStore tokenUsageStore,
-            LlmProperties llmProperties) {
+            LlmProperties llmProperties,
+            MetadataContextService metadataContextService) {
         this.insightAgent = insightAgent;
         this.rawDbAgent = rawDbAgent;
         this.insightStreamAgent = insightStreamAgent;
@@ -73,6 +76,7 @@ public class AgentController {
         this.traceStore = traceStore;
         this.tokenUsageStore = tokenUsageStore;
         this.llmProperties = llmProperties;
+        this.metadataContextService = metadataContextService;
     }
 
     @PostMapping("/insight")
@@ -80,11 +84,14 @@ public class AgentController {
         String question = requireQuestion(body);
         String requestId = newRequestId("fabric", question);
         log.info("Agent[insight] requestId={} Q='{}'", requestId, question);
+        // F3: A 路 RAG —— 注入 OpenMetadata 表注释上下文（离线自动降级为原问题）
+        MetadataContextService.Augment rag = metadataContextService.augment(question);
+        recordRagContext(requestId, rag);
         TraceContext.set(requestId);
         UsageContext.set("fabric", requestId);
         long t0 = System.currentTimeMillis();
         try {
-            String answer = insightAgent.answer(question);
+            String answer = insightAgent.answer(rag.augmentedQuestion());
             long elapsed = System.currentTimeMillis() - t0;
             finishTrace(requestId, "SUCCESS", elapsed);
             return Map.of(
@@ -146,12 +153,14 @@ public class AgentController {
      * F5 流式端点（A 路治理）。
      * 返回 SseEmitter，Spring MVC 把回调里的 send 转成 SSE 帧。
      * F9：request 级 trace（工具级 ThreadLocal 在流式回调线程不可见，见 TraceContext）。
+     * F3：流式同享 RAG 上下文注入。
      */
     @PostMapping(value = "/insight/stream")
     public SseEmitter insightStream(@RequestBody Map<String, String> body) {
         String question = requireQuestion(body);
         log.info("Agent[insight/stream] Q='{}'", question);
-        return startStream(insightStreamAgent.answer(question), "fabric", question);
+        MetadataContextService.Augment rag = metadataContextService.augment(question);
+        return startStream(insightStreamAgent.answer(rag.augmentedQuestion()), "fabric", question, rag);
     }
 
     /**
@@ -161,7 +170,7 @@ public class AgentController {
     public SseEmitter rawStream(@RequestBody Map<String, String> body) {
         String question = requireQuestion(body);
         log.info("Agent[raw/stream] Q='{}'", question);
-        return startStream(rawStreamAgent.answer(question), "raw", question);
+        return startStream(rawStreamAgent.answer(question), "raw", question, null);
     }
 
     /**
@@ -192,17 +201,29 @@ public class AgentController {
                 "elapsedMs", elapsedMs)));
     }
 
+    /** F3: RAG 命中情况进 trace 时间线（null = B 路流式对照，无 RAG） */
+    private void recordRagContext(String requestId, MetadataContextService.Augment rag) {
+        if (rag == null) {
+            return;
+        }
+        traceStore.add(requestId, TraceEvent.of("RAG_CONTEXT", Map.of(
+                "tables", rag.tables(),
+                "augmentedChars", rag.augmentedQuestion().length())));
+    }
+
     /**
      * 把 LangChain4j {@link TokenStream} 桥接到 Spring MVC {@link SseEmitter}。
      *
      * onPartialResponse → 一条 {@code token} 事件；onCompleteResponse → {@code done}；
      * onError → {@code error} 然后关闭。客户端 disconnection 通过 send 抛 IOException 探测。
      */
-    private SseEmitter startStream(TokenStream stream, String path, String question) {
+    private SseEmitter startStream(TokenStream stream, String path, String question,
+                                   MetadataContextService.Augment rag) {
         SseEmitter emitter = new SseEmitter(DEFAULT_TIMEOUT_MS);
         final long t0 = System.currentTimeMillis();
         final String tag = "Agent[" + path + "/stream]";
         final String requestId = newRequestId(path, question);
+        recordRagContext(requestId, rag);
 
         emitter.onTimeout(() -> {
             log.warn("{} timeout", tag);
