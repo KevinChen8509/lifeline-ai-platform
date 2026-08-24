@@ -631,6 +631,8 @@ tr:hover td { background: var(--bg-2); }
   transition: color .15s, border-color .15s;
 }
 .tab:hover { color: var(--text-0); }
+/* Week 3/4 独立页入口（tab 样式的链接） */
+.tab-link { text-decoration: none; display: inline-block; }
 .tab.active {
   color: var(--accent);
   border-bottom-color: var(--accent);

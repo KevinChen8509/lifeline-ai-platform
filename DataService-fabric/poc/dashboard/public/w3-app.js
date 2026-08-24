@@ -102,6 +102,7 @@ const app = createApp({
           <div class="sub">A 路治理（脱敏+审计+血缘） vs B 路直查（无治理 · PII 泄漏对照）</div>
         </div>
         <a href="/">← 回主页</a>
+          <a href="/w4-app.html" style="margin-left:14px;">W4 可观测台 →</a>
       </header>
 
       <div class="container">

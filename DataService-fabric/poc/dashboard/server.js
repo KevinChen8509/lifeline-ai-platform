@@ -11,6 +11,11 @@ import {
   fetchAudit,
   fetchMaskingComparison,
   askAgent,
+  fetchTrace,
+  fetchUsage,
+  fetchToolCalls,
+  fetchPools,
+  pipeAgentStream,
 } from './lib/data-service-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -165,6 +170,65 @@ app.post('/api/w3/ask-raw', async (req, res) => {
   }
   const result = await askAgent('/api/v1/agent/raw', question);
   res.status(result.http >= 200 && result.http < 500 ? 200 : 502).json(result);
+});
+
+// ============================================================
+// Week 4 路由：Agent 可观测台（F2 / F4 / F5 / F6 / F8 / F9）
+// ============================================================
+
+/** POST /api/w4/stream/:route { question } — F5 SSE 流式透传（route = insight | raw） */
+app.post('/api/w4/stream/:route', async (req, res) => {
+  const route = req.params.route === 'raw' ? 'raw' : 'insight';
+  const question = req.body?.question;
+  if (!question || !question.trim()) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'question 不能为空' });
+  }
+  await pipeAgentStream(route, question, res);
+});
+
+/** GET /api/w4/trace/:requestId — F9 治理链路时间线（404 透传给前端显示"未找到"） */
+app.get('/api/w4/trace/:requestId', async (req, res) => {
+  const result = await fetchTrace(req.params.requestId);
+  if (result.error) return res.status(502).json(result);
+  res.status(result.http).json(result.data);
+});
+
+/** GET /api/w4/usage — F6 token 用量 + 成本估算 */
+app.get('/api/w4/usage', async (req, res) => {
+  const result = await fetchUsage();
+  res.status(result.ok ? 200 : 502).json(result.ok ? result.data : result);
+});
+
+/** GET /api/w4/tool-calls?path=fabric|raw&limit=50 — F2 工具调用日志 */
+app.get('/api/w4/tool-calls', async (req, res) => {
+  const { path, limit } = req.query;
+  const result = await fetchToolCalls({ path: path || undefined, limit: +limit || 50 });
+  res.status(result.ok ? 200 : 502).json(result.ok ? result.data : result);
+});
+
+/** GET /api/w4/pools — F8 三源 HikariCP 连接池状态 */
+app.get('/api/w4/pools', async (req, res) => {
+  const result = await fetchPools();
+  res.status(result.ok ? 200 : 502).json(result.ok ? result.data : result);
+});
+
+/**
+ * POST /api/w4/redteam { payload } — F4 B 路注入演示：
+ * 同步调 raw Agent，再取该 requestId 的工具调用日志作为"rows=0 铁证"。
+ */
+app.post('/api/w4/redteam', async (req, res) => {
+  const payload = req.body?.payload;
+  if (!payload || !payload.trim()) {
+    return res.status(400).json({ error: 'BAD_REQUEST', message: 'payload 不能为空' });
+  }
+  const result = await askAgent('/api/v1/agent/raw', payload);
+  const requestId = result.data?.requestId;
+  let toolCalls = [];
+  if (requestId) {
+    const logs = await fetchToolCalls({ path: 'raw', limit: 50 });
+    toolCalls = (logs.data?.recent || []).filter((c) => c.requestId === requestId);
+  }
+  res.json({ ...result, toolCalls });
 });
 
 app.listen(PORT, () => {

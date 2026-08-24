@@ -1,4 +1,4 @@
-# Data Fabric 验证 Dashboard（Week 1 + Week 2）
+# Data Fabric 验证 Dashboard（Week 1 + Week 2 + Week 3 + Week 4）
 
 **目的**: 通过可视化方式逐项验证 Data Fabric PoC 的完成度。
 
@@ -7,7 +7,7 @@
 - 每个用例显示：状态徽章 / 耗时 / 数据源 chips / 多种图表 / 数据表 / SQL 原文
 - Trino 不可达时优雅降级（红色徽章 + 错误信息）
 
-## Tab 2 · Week 2 数据服务 + 治理（新增）
+## Tab 2 · Week 2 数据服务 + 治理
 5 个端点面板：
 - **客户画像** `/api/v1/customers/{id}/profile` — 字段 grid，自动标记脱敏/隐藏字段
 - **客户分群** `/api/v1/customers?level=VIP3` — 表格 + 等级/风险 chip
@@ -16,6 +16,40 @@
 - **审计日志** — `/api/v1/audit/recent` 实时流，每 5 秒自动刷新，显示 actor / action / resource / risk
 
 服务栈健康卡（左侧）：Trino / Cube.dev / Spring Boot 三状态，绿色 up / 黄 degraded / 红 down
+
+## 独立页 · Week 3 AI Agent 对比（`/w3-app.html`）
+- 同一问题并发打 A 路（insight，治理全开）与 B 路（raw，直查无治理）
+- 回答并排展示 + PII 正则探测标记（A 路"已脱敏 ✓" / B 路"⚠ 明文泄漏"）
+
+## 独立页 · Week 4 Agent 可观测台（`/w4-app.html`，F 系列收口可视化）
+- **双路 SSE 流式**（F5）— A/B 两栏打字机输出，done 帧回传 requestId 徽章，一键跳 trace
+- **红队注入演示**（F4）— 预设 OR 恒真 / 堆叠 DROP 社工话术打 B 路，附该请求工具日志（rows=0 铁证）
+- **Trace 治理链路时间线**（F9 + F3）— REQUEST / RAG_CONTEXT（F3 命中表+增补字符数）/ TOOL_CALL / AUDIT / LINEAGE 五类事件竖排时间线，payload JSON 可展开
+- **可观测三面板**（10s 自动刷新）：Token 用量+成本估算（F6）/ 工具调用日志按 tool 聚合+近期明细（F2）/ 三源 HikariCP 连接池 active-idle-awaiting（F8）
+
+后端代理路由（API key 服务端持有，浏览器不接触密钥）：
+
+| 路由 | 上游 | 说明 |
+|------|------|------|
+| `POST /api/w4/stream/:route` | `/api/v1/agent/{insight,raw}/stream` | SSE 帧级透传（undici 正常收尾会多抛 terminated，已按"终止帧已送达"吞掉） |
+| `GET /api/w4/trace/:requestId` | `/api/v1/agent/trace/{id}` | 404 原样透传 |
+| `GET /api/w4/usage` | `/api/v1/agent/usage` | 全局+分路径聚合 |
+| `GET /api/w4/tool-calls` | `/api/v1/agent/tool-calls` | path/limit 透传 |
+| `GET /api/w4/pools` | `/api/v1/raw-db/pools` | 三源池状态 |
+| `POST /api/w4/redteam` | `raw` Agent + tool-calls 过滤 | 注入演示 + 同 requestId 铁证 |
+
+**半 live 模式**（Docker 离线也能演示 B 路全功能）：
+
+```bash
+cd poc
+LLM_API_KEY=<Ark key> bash scripts/w4-demo.sh
+# 打开 http://localhost:3000/w4-app.html
+```
+
+栈：om-stub.js（:18585，RAG 桩）→ data-service（:8090，MySQL 用 H2 MODE=MySQL 替身，
+种子脚本 `scripts/w4-init.sql` 必须**幂等**——H2 INIT=RUNSCRIPT 在每条新连接上都会重跑，
+裸 INSERT 会让池的第 2 个连接撞主键）→ dashboard（:3000）。
+A 路 insight 需 Cube 在线；离线时 A 栏报错属预期，B 路/红队/三面板全功能可用。
 
 ## 架构
 
