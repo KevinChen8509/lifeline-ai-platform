@@ -15,7 +15,8 @@
 | 自助发布 | `POST /api/v1/services`：slug/列白名单/operator/defaultLimit 校验；**列必须逐字命中 OM 元数据**（防注入第一道闸；OM 离线拒绝发布不降强度） | 同上 |
 | 参数化执行 | `GET /api/v1/services/{slug}/query`：标识符二次正则复检 + 全值 PreparedStatement 绑定 + LIMIT 钳制 500 + 单行 JSON `SERVICE_CALL_LOG` 落账；复用 F8 三源 HikariCP 池 | `api/ServiceMarketplaceController.java` |
 | 服务下线 | `DELETE /api/v1/services/{slug}`（builtin 拒删） | 同上 |
-| 可视化 | `/w5-app.html` 三 Tab：数据资源目录（搜索/域过滤/发布直达）· 业务场景（客户域真执行 + 城市生命线展示型）· 服务市场（对比条 + 发布向导 + builtin/已发布试调台 + curl 复制） | `dashboard/public/w5-app.*` |
+| 服务验证台 | `/w5-app.html` 第 4 Tab：对已发布服务跑 5 项契约验证（V1 正常调用形状 · V2 注入防御 · V3 未知参数拒绝 · V4 LIMIT 钳制 · V5 发布白名单闸红队探针），PASS/FAIL/SKIP 徽章 + 汇总裁决「验证通过可交付」；发布成功与市场卡片均有「去验证」深链 | `dashboard/public/w5-app.*` |
+| 可视化 | `/w5-app.html` 四 Tab：数据资源目录（搜索/域过滤/发布直达）· 业务场景（客户域真执行 + 城市生命线展示型）· 服务市场（对比条 + 发布向导 + builtin/已发布试调台 + curl 复制）· 服务验证 | `dashboard/public/w5-app.*` |
 
 ## 验证
 
@@ -27,7 +28,7 @@
   2. 试调 `?cust_level=VIP3` → 张伟行，553ms
   3. 注入 payload → `total:0`（1ms）
   4. 目录列表 = 6 builtin + 1 已发布
-- **浏览器走查**：目录 3 表 → 场景卡（客户域试调 / 生命线展示）→ 向导发布 → 试调台出数 → curl 复制
+- **浏览器走查**：目录 3 表 → 场景卡（客户域试调 / 生命线展示）→ 向导发布 → 试调台出数 → curl 复制 → **验证台 5 项全 PASS**（V1 形状契约 / V2 `total:0` / V3 `400 未注册的过滤参数` / V4 钳制 `total:3≤500` / V5 `400 列名不合法`，活栈 curl 逐项复核实录）
 
 ## 新旧模式对比（页面顶部对比条）
 

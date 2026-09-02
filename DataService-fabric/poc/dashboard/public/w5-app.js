@@ -9,6 +9,7 @@ const state = {
   domainFilter: '全部',
   search: '',
   wiz: { filters: [], busy: false },
+  verify: { slug: '', running: false },
 };
 
 // ============================================================
@@ -263,6 +264,7 @@ const BUILTIN_TRY_PATH = {
 function renderServices() {
   const builtin = state.services.filter((s) => s.service.type === 'builtin');
   const published = state.services.filter((s) => s.service.type === 'table-query');
+  renderVerifySelect();
 
   $('#builtin-grid').innerHTML = builtin.map(({ service: s, callCount }) => `
     <div class="card">
@@ -309,6 +311,7 @@ function renderServices() {
         </div>
         <div class="actions">
           <button class="primary" data-svc-call="${esc(s.slug)}">▶ 试调</button>
+          <button class="ghost" data-svc-verify="${esc(s.slug)}">🧪 验证</button>
           <button class="ghost" data-svc-curl="${esc(s.slug)}">📋 复制 curl</button>
           <button class="danger" data-svc-del="${esc(s.slug)}">下线</button>
           <span class="callcount">累计调用 <b>${callCount}</b> 次</span>
@@ -349,6 +352,9 @@ function bindPublishedActions() {
       showResult(box, { ok: res.ok, http: res.status, data }, started);
       loadServices();
     };
+  });
+  document.querySelectorAll('[data-svc-verify]').forEach((btn) => {
+    btn.onclick = () => gotoVerify(btn.dataset.svcVerify);
   });
   document.querySelectorAll('[data-svc-curl]').forEach((btn) => {
     btn.onclick = () => {
@@ -429,12 +435,201 @@ async function publishFromWizard() {
   const data = await res.json().catch(() => ({}));
   state.wiz.busy = false;
   if (res.status === 201) {
-    status.innerHTML = `<span class="ok">✓ 已发布：GET /api/v1/services/${esc(slug)}/query</span>`;
+    status.innerHTML = `<span class="ok">✓ 已发布：GET /api/v1/services/${esc(slug)}/query</span> <button class="ghost" id="goto-verify">🧪 去验证</button>`;
+    const gv = $('#goto-verify');
+    if (gv) gv.onclick = () => gotoVerify(slug);
     toast(`「${name}」发布成功 —— 分钟级上线，无需后端排期`);
     loadServices();
   } else {
     status.innerHTML = `<span class="err">✕ ${esc(data.message ?? `HTTP ${res.status}`)}</span>`;
   }
+}
+
+// ============================================================
+// Tab 4：服务验证台 —— 发布 ≠ 交付，验证通过才可交给消费方
+// ============================================================
+
+function gotoVerify(slug) {
+  state.verify.slug = slug;
+  renderVerifySelect();
+  switchTab('verify');
+  $('#panel-verify').scrollIntoView({ behavior: 'smooth' });
+  toast(`验证对象「${slug}」已就位 —— 点「运行验证套件」`);
+}
+
+function renderVerifySelect() {
+  const sel = $('#verify-slug');
+  if (!sel) return;
+  const published = state.services.filter((s) => s.service.type === 'table-query');
+  sel.innerHTML = published.length
+    ? published.map(({ service: s }) => `<option value="${esc(s.slug)}">${esc(s.slug)} —— ${esc(s.name)}</option>`).join('')
+    : '<option value="">（尚无已发布服务 —— 先到服务市场发布）</option>';
+  if (state.verify.slug && published.some(({ service: s }) => s.slug === state.verify.slug)) {
+    sel.value = state.verify.slug;
+  }
+  renderVerifyContract();
+}
+
+function currentVerifyService() {
+  const slug = $('#verify-slug')?.value;
+  return state.services.find((s) => s.service.slug === slug)?.service ?? null;
+}
+
+function renderVerifyContract() {
+  const box = $('#verify-contract');
+  const s = currentVerifyService();
+  if (!s) { box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <div class="card" style="margin-bottom:14px">
+      <h3><span class="badge published">契约快照</span>${esc(s.slug)}</h3>
+      <div class="cols">
+        <div>返回列白名单：<code>${s.allowedColumns.map(esc).join('</code> <code>')}</code></div>
+        <div>过滤参数：${s.filters.length ? s.filters.map((f) => `<code>${esc(f.column)}:${esc(f.operator)}</code>`).join(' ') : '（无）'}</div>
+        <div>源表：<span class="fqn">${esc(s.source)}.${esc(s.table)}</span> · 默认 ${s.defaultLimit} 行 · LIMIT 上限 500</div>
+      </div>
+    </div>`;
+  const first = s.filters[0];
+  if (first) $('#verify-value').value = defaultHint(s.table, first.column);
+}
+
+async function callVerifyQuery(slug, params) {
+  const qs = new URLSearchParams(params);
+  const started = Date.now();
+  const res = await fetch(`/api/w5/services/${encodeURIComponent(slug)}/query?${qs}`);
+  let data = null;
+  try { data = await res.json(); } catch { /* 空响应体 */ }
+  return { http: res.status, ok: res.ok, data, elapsed: Date.now() - started };
+}
+
+async function runVerificationSuite() {
+  const s = currentVerifyService();
+  if (!s) { toast('尚无可验证的已发布服务 —— 先到服务市场发布', false); return; }
+  if (state.verify.running) return;
+  state.verify.running = true;
+  const btn = $('#verify-run');
+  btn.disabled = true;
+  const resultsBox = $('#verify-results');
+  const summaryBox = $('#verify-summary');
+  summaryBox.innerHTML = '';
+  resultsBox.innerHTML = '<div class="empty">验证套件运行中…</div>';
+
+  const first = s.filters[0];
+  const testValue = $('#verify-value').value.trim() || 'VIP3';
+  const rows = [];
+  const addRow = (r) => { rows.push(r); resultsBox.innerHTML = verifyTableHtml(rows); };
+
+  // V1 正常调用：形状契约（HTTP 200 + 返回列 = 发布白名单 + 行数 ≤ limit）
+  {
+    const params = first ? { [first.column]: testValue } : {};
+    const r = await callVerifyQuery(s.slug, { ...params, limit: 5 });
+    const cols = r.data?.columns ?? [];
+    const whitelist = new Set(s.allowedColumns);
+    const rowCount = r.data?.rows?.length ?? -1;
+    const shapeOk = r.http === 200
+      && cols.length === s.allowedColumns.length
+      && cols.every((c) => whitelist.has(c))
+      && rowCount >= 0 && rowCount <= 5;
+    addRow({
+      id: 'V1', name: '正常调用', expect: 'HTTP 200 · 返回列 = 发布白名单 · 行数 ≤ limit',
+      status: shapeOk ? 'pass' : 'fail',
+      detail: `HTTP ${r.http} · ${rowCount} 行 · ${r.elapsed}ms · 列 [${cols.join(', ')}]`,
+    });
+  }
+
+  // V2 SQL 注入防御：payload 参数化绑定 → 200 且 0 行零泄露
+  if (first) {
+    const payload = `${testValue}' OR '1'='1`;
+    const r = await callVerifyQuery(s.slug, { [first.column]: payload, limit: 5 });
+    const safe = r.http === 200 && (r.data?.total ?? -1) === 0;
+    addRow({
+      id: 'V2', name: 'SQL 注入防御', expect: `payload「…' OR '1'='1」参数化绑定 → 200 且 total=0`,
+      status: safe ? 'pass' : 'fail',
+      detail: `HTTP ${r.http} · total=${r.data?.total ?? '?'} · ${r.elapsed}ms`,
+    });
+  } else {
+    addRow({ id: 'V2', name: 'SQL 注入防御', expect: 'payload 参数化绑定 → 200 且 total=0', status: 'skip', detail: '服务未配置过滤参数 —— 无值入口' });
+  }
+
+  // V3 未知参数拒绝：未注册参数 → 400
+  {
+    const r = await callVerifyQuery(s.slug, { __bogus_param: 'x' });
+    const msg = String(r.data?.message ?? r.data?.error ?? '');
+    addRow({
+      id: 'V3', name: '未知参数拒绝', expect: '未注册参数 __bogus_param → HTTP 400',
+      status: r.http === 400 ? 'pass' : 'fail',
+      detail: `HTTP ${r.http} · ${msg.slice(0, 80)}`,
+    });
+  }
+
+  // V4 LIMIT 钳制：limit=99999 → 服务端钳制 ≤500 不失控
+  {
+    const r = await callVerifyQuery(s.slug, { limit: 99999 });
+    const rowCount = r.data?.rows?.length ?? 1e9;
+    addRow({
+      id: 'V4', name: 'LIMIT 钳制', expect: 'limit=99999 → 钳制 ≤500，不报错不失控',
+      status: r.http === 200 && rowCount <= 500 ? 'pass' : 'fail',
+      detail: `HTTP ${r.http} · 返回 ${rowCount > 1e8 ? '?' : rowCount} 行（≤500）· ${r.elapsed}ms`,
+    });
+  }
+
+  // V5 发布白名单闸：携带注入列名重新发布 → 400（列必须逐字命中目录元数据）
+  {
+    const table = state.tables.find((t) => t.source === s.source && t.table === s.table);
+    if (table) {
+      const probeSlug = `verify-probe-${Date.now()}`;
+      const res = await fetch('/api/w5/services', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slug: probeSlug, name: '验证探针（应被拒）', description: 'verify probe',
+          fqn: table.fqn,
+          allowedColumns: [...s.allowedColumns, 'cust_level; DROP TABLE customer'],
+          filters: [], defaultLimit: 5,
+        }),
+      });
+      let msg = '';
+      try { msg = (await res.json()).message ?? ''; } catch { /* ignore */ }
+      if (res.status === 201) {
+        await fetch(`/api/w5/services/${encodeURIComponent(probeSlug)}`, { method: 'DELETE' }); // 意外通过 → 清理探针
+      }
+      addRow({
+        id: 'V5', name: '发布白名单闸', expect: '携带「cust_level; DROP TABLE customer」列发布 → HTTP 400',
+        status: res.status === 400 ? 'pass' : 'fail',
+        detail: `HTTP ${res.status} · ${String(msg).slice(0, 90)}`,
+      });
+    } else {
+      addRow({ id: 'V5', name: '发布白名单闸', expect: '携带注入列名发布 → HTTP 400', status: 'skip', detail: '目录中未找到该表 FQN（OM 离线？）—— 无法构造发布探针' });
+    }
+  }
+
+  const pass = rows.filter((r) => r.status === 'pass').length;
+  const fail = rows.filter((r) => r.status === 'fail').length;
+  const skip = rows.filter((r) => r.status === 'skip').length;
+  summaryBox.innerHTML = `
+    <div class="verdict ${fail ? 'bad' : 'ok'}">
+      ${fail
+        ? `✕ 验证未通过：${fail} 项 FAIL —— 请检查服务定义后再交付`
+        : `✓ 验证通过：${pass} 项 PASS${skip ? ` · ${skip} 项跳过` : ''} —— 「${esc(s.slug)}」可交付消费方（curl 复制见服务市场页）`}
+    </div>`;
+  state.verify.running = false;
+  btn.disabled = false;
+  loadServices(); // 刷新调用计数
+}
+
+function verifyTableHtml(rows) {
+  const badge = (st) => `<span class="badge v-${st}">${st === 'pass' ? 'PASS' : st === 'fail' ? 'FAIL' : 'SKIP'}</span>`;
+  return `
+    <table class="params-table">
+      <thead><tr><th style="width:46px">用例</th><th style="width:110px">名称</th><th>预期</th><th style="width:44%">结果</th></tr></thead>
+      <tbody>
+        ${rows.map((r) => `<tr>
+          <td><b>${esc(r.id)}</b></td>
+          <td>${esc(r.name)}</td>
+          <td style="color:var(--text-dim)">${esc(r.expect)}</td>
+          <td>${badge(r.status)} <span style="font-size:12px;color:var(--text-dim)">${esc(r.detail)}</span></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
 }
 
 // ============================================================
@@ -453,6 +648,8 @@ $('#wiz-add-filter').onclick = () => {
   renderWizardFilters();
 };
 $('#wiz-publish').onclick = publishFromWizard;
+$('#verify-slug').onchange = renderVerifyContract;
+$('#verify-run').onclick = runVerificationSuite;
 
 renderScenarios();
 loadCatalog();
