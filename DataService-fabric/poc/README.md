@@ -230,3 +230,15 @@ Week 1 完成后，进入 Week 2（语义层 + 治理嵌入 + 服务层）：
 - OpenMetadata 自动血缘依赖 JDBC 解析（v1.12 的 ClickHouse View 血缘有 bug Issue #17574，表血缘正常）
 - 数据量较小（1 万订单），Cube.dev 预聚合优势不明显，Week 3 会用 JMeter 扩量验证
 - 单机部署，无 HA
+
+---
+
+## 10. 各周结果文档
+
+| 周 | 主题 | 文档 |
+|---|---|---|
+| Week 1 | 三源联邦查询（Trino + OpenMetadata 血缘） | `WEEK1-RESULTS.md` |
+| Week 2 | 五层架构：数据服务 + 语义层 + 治理 | `WEEK2-RESULTS.md` |
+| Week 3 | AI Agent 双路对比（A 路治理 vs B 路直查） | `WEEK3-RESULTS.md` |
+| Week 4 | F 系列生产化加固 + Agent 可观测台 | `WEEK4-RESULTS.md` |
+| Week 5 | 数据服务市场（资源目录 + 业务场景 + 自助发布 API） | `WEEK5-RESULTS.md` |

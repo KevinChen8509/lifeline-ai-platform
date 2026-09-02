@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Week 5 · 数据服务市场 — Data Fabric PoC</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    :root {
+      --bg: #0f172a; --card-bg: #1e293b; --border: #334155;
+      --text: #e2e8f0; --text-dim: #94a3b8;
+      --green: #10b981; --blue: #60a5fa; --amber: #fbbf24; --purple: #c084fc;
+      --red: #ef4444; --cyan: #22d3ee;
+      --src-mysql: #60a5fa; --src-clickhouse: #fbbf24; --src-postgres: #34d399;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .page-header { padding: 20px 32px; background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    .page-header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+    .page-header .sub { color: var(--text-dim); font-size: 13px; margin-top: 2px; }
+    .page-header .links a { color: var(--green); text-decoration: none; font-size: 13px; margin-left: 14px; }
+    .container { padding: 24px 32px; max-width: 1600px; margin: 0 auto; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+    .tab-btn { padding: 9px 20px; background: var(--card-bg); color: var(--text-dim); border: 1px solid var(--border); border-radius: 8px 8px 0 0; cursor: pointer; font-size: 14px; }
+    .tab-btn.active { color: var(--text); border-bottom: 2px solid var(--green); background: #273449; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .section-title { font-size: 14px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; margin: 22px 0 12px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+    .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .card h3 { margin: 0 0 6px; font-size: 15px; }
+    .card .desc { color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+    .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; margin-right: 6px; border: 1px solid; }
+    .badge.src-mysql { color: var(--src-mysql); border-color: var(--src-mysql); }
+    .badge.src-clickhouse { color: var(--src-clickhouse); border-color: var(--src-clickhouse); }
+    .badge.src-postgres { color: var(--src-postgres); border-color: var(--src-postgres); }
+    .badge.domain { color: var(--purple); border-color: var(--purple); }
+    .badge.builtin { color: var(--cyan); border-color: var(--cyan); }
+    .badge.published { color: var(--green); border-color: var(--green); }
+    .badge.pending { color: var(--amber); border-color: var(--amber); }
+    .fqn { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; color: var(--cyan); word-break: break-all; }
+    .cols { margin: 10px 0; font-size: 12px; color: var(--text-dim); }
+    .cols div { padding: 2px 0; border-bottom: 1px dashed #2c3a52; }
+    .cols code { color: var(--blue); font-family: Consolas, monospace; }
+
+    button.primary { background: var(--green); color: #06281e; border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+    button.ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+    button.ghost:hover { color: var(--text); border-color: var(--text-dim); }
+    button.danger { background: transparent; color: var(--red); border: 1px solid var(--red); border-radius: 6px; padding: 6px 12px; font-size: 12px; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+
+    input, select { background: #16213a; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 8px 10px; font-size: 13px; }
+    input:focus, select:focus { outline: none; border-color: var(--green); }
+
+    /* 对比条 */
+    .compare { display: grid; grid-template-columns: 1fr 60px 1fr; gap: 0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+    .compare .col { padding: 16px 20px; }
+    .compare .col h4 { margin: 0 0 8px; font-size: 14px; }
+    .compare .old h4 { color: var(--red); }
+    .compare .new h4 { color: var(--green); }
+    .compare .vs { display: flex; align-items: center; justify-content: center; color: var(--text-dim); font-weight: 700; background: #16213a; }
+    .compare .steps { font-size: 12px; color: var(--text-dim); line-height: 1.9; }
+    .compare .verdict { font-size: 13px; margin-top: 8px; }
+
+    /* 发布向导 */
+    .wizard { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 18px; margin-bottom: 18px; }
+    .wizard h3 { margin: 0 0 4px; font-size: 15px; }
+    .wizard .hint { color: var(--text-dim); font-size: 12px; margin-bottom: 14px; }
+    .wiz-row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+    .wiz-row label { font-size: 13px; color: var(--text-dim); min-width: 90px; }
+    .check-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .check-grid label { display: flex; align-items: center; gap: 5px; font-size: 13px; background: #16213a; padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+    .check-grid input { width: auto; }
+
+    /* 服务卡片 */
+    .svc-path { font-family: Consolas, monospace; font-size: 12px; color: var(--cyan); word-break: break-all; margin: 6px 0; }
+    .method { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 4px; margin-right: 6px; }
+    .method.GET { background: #143a2b; color: var(--green); }
+    .method.POST { background: #3a3114; color: var(--amber); }
+    .params-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0; }
+    .params-table th, .params-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid #2c3a52; }
+    .params-table th { color: var(--text-dim); font-weight: 500; }
+    .result-box { background: #0b1120; border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-family: Consolas, monospace; font-size: 12px; white-space: pre-wrap; max-height: 260px; overflow: auto; margin-top: 8px; }
+    .ok { color: var(--green); } .err { color: var(--red); }
+    .stat-line { font-size: 12px; color: var(--text-dim); margin-top: 6px; }
+    .stat-line b { color: var(--blue); }
+    .toast { position: fixed; right: 24px; bottom: 24px; background: #16213a; border: 1px solid var(--green); color: var(--text); padding: 12px 18px; border-radius: 8px; font-size: 13px; display: none; z-index: 10; max-width: 420px; }
+    .chips { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+    .chip { font-size: 12px; padding: 4px 12px; border-radius: 14px; border: 1px solid var(--border); color: var(--text-dim); cursor: pointer; background: var(--card-bg); }
+    .chip.active { color: var(--green); border-color: var(--green); }
+    .toolbar { display: flex; gap: 10px; margin-bottom: 14px; }
+    .toolbar input { flex: 1; }
+    .degraded-note { background: #3a2b14; border: 1px solid var(--amber); color: var(--amber); font-size: 13px; padding: 10px 14px; border-radius: 6px; margin-bottom: 14px; }
+    .empty { color: var(--text-dim); font-size: 13px; padding: 30px; text-align: center; border: 1px dashed var(--border); border-radius: 8px; }
+    .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+    .callcount { font-size: 12px; color: var(--text-dim); margin-left: auto; }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <div>
+      <h1>Week 5 · 数据服务市场</h1>
+      <div class="sub">数据资源目录 · 业务场景 · 服务接口使用与自助扩展 —— 以目录驱动的数据服务体系，取代点对点定制开发</div>
+    </div>
+    <div class="links">
+      <a href="/index.html">Week 1-2</a>
+      <a href="/w3-app.html">Week 3</a>
+      <a href="/w4-app.html">Week 4</a>
+    </div>
+  </header>
+
+  <div class="container">
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="catalog">📚 数据资源目录</button>
+      <button class="tab-btn" data-tab="scenarios">🎯 业务场景</button>
+      <button class="tab-btn" data-tab="market">🛒 服务市场</button>
+    </nav>
+
+    <!-- Tab 1: 目录 -->
+    <section class="tab-panel active" id="panel-catalog">
+      <div class="degraded-note" id="catalog-degraded" style="display:none">
+        ⚠ OpenMetadata 离线 —— 目录元数据不可用（F3 同款降级：不阻断，恢复后自动回来）
+      </div>
+      <div class="toolbar">
+        <input id="catalog-search" placeholder="搜索表名 / 列名 / 描述…" />
+      </div>
+      <div class="chips" id="catalog-domains"></div>
+      <div class="grid" id="catalog-grid"></div>
+    </section>
+
+    <!-- Tab 2: 场景 -->
+    <section class="tab-panel" id="panel-scenarios">
+      <div class="section-title">客户域场景（现有数据 · 可直接执行）</div>
+      <div class="grid" id="scenario-customer"></div>
+      <div class="section-title">城市生命线场景（数据待接入 · 展示服务化路径）</div>
+      <div class="grid" id="scenario-lifeline"></div>
+    </section>
+
+    <!-- Tab 3: 服务市场 -->
+    <section class="tab-panel" id="panel-market">
+      <div class="compare">
+        <div class="col old">
+          <h4>✕ 旧模式：点对点定制开发</h4>
+          <div class="steps">需求提出 → 排期评审 → 后端开发 → 联调测试 → 发布上线</div>
+          <div class="verdict err">每个新消费方都要走一遍 —— 周级周期，重复开发，接口口径漂移</div>
+        </div>
+        <div class="vs">VS</div>
+        <div class="col new">
+          <h4>✓ 新模式：目录自助服务</h4>
+          <div class="steps">目录发现数据 → 场景对齐口径 → 勾选列/参数自助发布 → 立即可调</div>
+          <div class="verdict ok">分钟级周期，白名单 + 参数化安全内建，口径由目录元数据统一</div>
+        </div>
+      </div>
+
+      <div class="section-title">自助发布向导（从目录表生成参数化 API）</div>
+      <div class="wizard" id="publish-wizard">
+        <h3>🪄 发布新服务</h3>
+        <div class="hint">列白名单发布时对照 OpenMetadata 元数据校验，值执行时全部参数化绑定 —— 注入防御内建（W5 测试 99/99 覆盖）</div>
+        <div class="wiz-row">
+          <label>目录表</label>
+          <select id="wiz-table" style="min-width:320px"></select>
+        </div>
+        <div class="wiz-row">
+          <label>服务名称</label>
+          <input id="wiz-name" placeholder="如：VIP 客户查询" style="width:200px" />
+          <label>slug</label>
+          <input id="wiz-slug" placeholder="vip-customer-query" style="width:220px" />
+          <label>默认行数</label>
+          <input id="wiz-limit" type="number" value="20" min="1" max="500" style="width:80px" />
+        </div>
+        <div class="wiz-row">
+          <label>返回列</label>
+          <div class="check-grid" id="wiz-columns"></div>
+        </div>
+        <div class="wiz-row">
+          <label>过滤参数</label>
+          <select id="wiz-filter-col" style="min-width:160px"></select>
+          <select id="wiz-filter-op" style="width:110px">
+            <option value="eq">eq (=)</option>
+            <option value="like">like</option>
+            <option value="gte">gte (≥)</option>
+            <option value="lte">lte (≤)</option>
+          </select>
+          <button class="ghost" id="wiz-add-filter">+ 添加过滤参数</button>
+          <span id="wiz-filters-list" style="font-size:12px;color:var(--text-dim)"></span>
+        </div>
+        <div class="wiz-row">
+          <button class="primary" id="wiz-publish">🚀 发布服务</button>
+          <span id="wiz-status" style="font-size:12px"></span>
+        </div>
+      </div>
+
+      <div class="section-title">平台内置服务</div>
+      <div class="grid" id="builtin-grid"></div>
+
+      <div class="section-title">已发布服务（自助扩展）</div>
+      <div id="published-wrap"><div class="empty" id="published-empty">尚无自助发布的服务 —— 从左侧「数据资源目录」选一张表，或用上方向导发布第一个 API</div></div>
+      <div class="grid" id="published-grid" style="margin-top:10px"></div>
+    </section>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script src="/w5-app.js"></script>
+</body>
+</html>

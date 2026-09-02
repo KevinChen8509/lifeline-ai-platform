@@ -16,6 +16,11 @@ import {
   fetchToolCalls,
   fetchPools,
   pipeAgentStream,
+  fetchCatalogTables,
+  listServices,
+  publishService,
+  callService,
+  unpublishService,
 } from './lib/data-service-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -229,6 +234,45 @@ app.post('/api/w4/redteam', async (req, res) => {
     toolCalls = (logs.data?.recent || []).filter((c) => c.requestId === requestId);
   }
   res.json({ ...result, toolCalls });
+});
+
+// ============================================================
+// Week 5 路由：数据资源目录 + 服务市场（自助发布参数化 API）
+// ============================================================
+
+/** GET /api/w5/catalog — 目录表（OM 元数据，degraded 标注 OM 离线） */
+app.get('/api/w5/catalog', async (req, res) => {
+  const result = await fetchCatalogTables();
+  if (result.error) return res.status(502).json(result);
+  res.status(result.ok ? 200 : 502).json(result.data);
+});
+
+/** GET /api/w5/services — 服务目录（builtin + 自助发布 + 调用计数） */
+app.get('/api/w5/services', async (req, res) => {
+  const result = await listServices();
+  if (result.error) return res.status(502).json(result);
+  res.status(result.ok ? 200 : 502).json(result.data);
+});
+
+/** POST /api/w5/services — 自助发布（校验失败 400 带原因透传给向导） */
+app.post('/api/w5/services', async (req, res) => {
+  const result = await publishService(req.body || {});
+  if (result.error) return res.status(502).json(result);
+  res.status(result.http).json(result.data);
+});
+
+/** GET /api/w5/services/:slug/query — 试调（查询串原样转发） */
+app.get('/api/w5/services/:slug/query', async (req, res) => {
+  const result = await callService(req.params.slug, req.query);
+  if (result.error) return res.status(502).json(result);
+  res.status(result.http).json(result.data);
+});
+
+/** DELETE /api/w5/services/:slug — 下线 */
+app.delete('/api/w5/services/:slug', async (req, res) => {
+  const result = await unpublishService(req.params.slug);
+  if (result.error) return res.status(502).json(result);
+  res.status(result.http).end();
 });
 
 app.listen(PORT, () => {

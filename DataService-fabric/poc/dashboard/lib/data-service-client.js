@@ -262,3 +262,75 @@ export async function pipeAgentStream(route, question, res) {
     res.end();
   }
 }
+
+// ============================================================
+// Week 5：数据资源目录 + 服务市场（W5 数据服务体系）
+// ============================================================
+
+/** GET /api/v1/catalog/tables — 目录表（OM 元数据整形；degraded=true 表示 OM 离线） */
+export async function fetchCatalogTables() {
+  try {
+    const res = await fetch(`${DATA_SERVICE_URL}/api/v1/catalog/tables`, {
+      headers: authHeaders(), signal: AbortSignal.timeout(8000),
+    });
+    return { ok: res.ok, http: res.status, data: await res.json() };
+  } catch (err) {
+    return { ok: false, http: 0, error: err.message };
+  }
+}
+
+/** GET /api/v1/services — 服务目录（builtin + 自助发布，含调用计数） */
+export async function listServices() {
+  try {
+    const res = await fetch(`${DATA_SERVICE_URL}/api/v1/services`, {
+      headers: authHeaders(), signal: AbortSignal.timeout(8000),
+    });
+    return { ok: res.ok, http: res.status, data: await res.json() };
+  } catch (err) {
+    return { ok: false, http: 0, error: err.message };
+  }
+}
+
+/** POST /api/v1/services — 自助发布参数化查询服务 */
+export async function publishService(def) {
+  try {
+    const res = await fetch(`${DATA_SERVICE_URL}/api/v1/services`, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(def),
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, http: res.status, data };
+  } catch (err) {
+    return { ok: false, http: 0, error: err.message };
+  }
+}
+
+/** GET /api/v1/services/{slug}/query?params — 试调已发布服务 */
+export async function callService(slug, params = {}) {
+  const qs = new URLSearchParams(params).toString();
+  try {
+    const res = await fetch(
+      `${DATA_SERVICE_URL}/api/v1/services/${encodeURIComponent(slug)}/query${qs ? `?${qs}` : ''}`,
+      { headers: authHeaders(), signal: AbortSignal.timeout(10000) },
+    );
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, http: res.status, data };
+  } catch (err) {
+    return { ok: false, http: 0, error: err.message };
+  }
+}
+
+/** DELETE /api/v1/services/{slug} — 下线自助发布的服务 */
+export async function unpublishService(slug) {
+  try {
+    const res = await fetch(
+      `${DATA_SERVICE_URL}/api/v1/services/${encodeURIComponent(slug)}`,
+      { method: 'DELETE', headers: authHeaders(), signal: AbortSignal.timeout(8000) },
+    );
+    return { ok: res.ok, http: res.status };
+  } catch (err) {
+    return { ok: false, http: 0, error: err.message };
+  }
+}
