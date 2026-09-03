@@ -298,7 +298,10 @@ class ServiceMarketplaceControllerTest {
                 .andExpect(jsonPath("$.rows[0].cust_level").value("VIP3"))
                 .andExpect(jsonPath("$.joins[0].name").value("orders"))
                 .andExpect(jsonPath("$.rows[0].orders.length()").value(2))
-                .andExpect(jsonPath("$.rows[0].orders[0].order_id").exists());
+                .andExpect(jsonPath("$.rows[0].orders[0].order_id").exists())
+                // 从行透出关联键（FV6 关联一致性依赖）
+                .andExpect(jsonPath("$.rows[0].orders[0].cust_id").value("C0001"))
+                .andExpect(jsonPath("$.rows[0].orders[1].cust_id").value("C0001"));
     }
 
     @Test

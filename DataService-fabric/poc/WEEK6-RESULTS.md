@@ -12,7 +12,7 @@
 |---|---|---|
 | 融合 DSL | 发布体新增 `joins[]`（fqn/name/columns/joinColumn/parentColumn/limitPerParent）：从表列+关联键**逐字命中 OM 元数据**、parentColumn ∈ 主表白名单、joins≤2、每主键 1-50；`type=fusion` | `service/ServiceRegistry.java` |
 | 两段式融合执行 | ① 主表参数化查询 → ② 收集主行 parentColumn 值去重 → `WHERE joinCol IN (?,?,…)` 全绑定查从表 → 应用层按 joinColumn 分组 → 每主行挂 `name` 嵌套数组（cap limitPerParent）；标识符执行前二次正则复检 | `api/ServiceMarketplaceController.java` |
-| 融合响应契约 | `{slug, columns, joins:[{name,columns}], rows:[{…主列, orders:[…从列]}], total, elapsedMs}` —— 嵌套数组字段名 = 发布声明的 name | 同上 |
+| 融合响应契约 | `{slug, columns, joins:[{name,columns}], rows:[{…主列, orders:[…从列]}], total, elapsedMs}` —— 嵌套数组字段名 = 发布声明的 name；**从行额外透出 joinColumn**（消费方与 FV6 关联一致性自检依赖） | 同上 |
 | 服务级 API Key | 发布即生成 `sk-w6-` + 32 hex（SecureRandom）；SecurityConfig **双通道**：全局 key=平台全权限 / 服务 key 仅绑定 slug 的 `/query`（路径正则 + `MessageDigest.isEqual` 恒时比较），其余一律 401 | `config/SecurityConfig.java` |
 | 融合发布向导 | 发布向导新增「跨表融合」开关：从表下拉（目录联动）· 从表列勾选 · 关联键⇠主表列联动（主表勾选变化实时刷新）· 每主键上限 | `dashboard/public/w5-app.*` |
 | fusion 卡片 | JOIN 徽标 + 从表关联信息（FQN/关联键/每主键上限）+ **apiKey 打码展示与一键复制** + curl 复制内嵌服务 key（第三方直调模板） | 同上 |

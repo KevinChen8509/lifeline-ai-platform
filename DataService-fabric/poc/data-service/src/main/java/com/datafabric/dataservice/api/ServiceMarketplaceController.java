@@ -71,7 +71,7 @@ public class ServiceMarketplaceController {
     public record QueryResponse(String slug, List<String> columns, List<Map<String, String>> rows,
                                 int total, long elapsedMs) {}
 
-    /** 融合响应：主行平铺主表列，每个 join.name 挂嵌套从行数组 */
+    /** 融合响应：主行平铺主表列，每个 join.name 挂嵌套从行数组（从行额外透出 joinColumn 供关联自检） */
     public record JoinView(String name, List<String> columns) {}
 
     public record FusionQueryResponse(String slug, List<String> columns, List<JoinView> joins,
@@ -193,6 +193,8 @@ public class ServiceMarketplaceController {
                         for (String col : join.columns()) {
                             row.put(col, rs.getString(col));
                         }
+                        // 关联键透出到从行：消费方与 FV6 关联一致性自检依赖它
+                        row.put(join.joinColumn(), rs.getString(join.joinColumn()));
                         grouped.computeIfAbsent(rs.getString(join.joinColumn()), k -> new ArrayList<>())
                                 .add(row);
                     }
