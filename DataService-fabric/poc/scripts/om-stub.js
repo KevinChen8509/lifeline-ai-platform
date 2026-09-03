@@ -27,6 +27,16 @@ const tables = {
       ]
     },
     {
+      fullyQualifiedName: 'mysql.customer_db.orders',
+      description: '客户订单表（W6 融合演示，H2 替身可执行；生产对应 CH orders）',
+      columns: [
+        { name: 'order_id', description: '订单号' },
+        { name: 'cust_id', description: '客户ID（关联 customer.cust_id）' },
+        { name: 'order_amount', description: '订单金额' },
+        { name: 'order_time', description: '下单时间' }
+      ]
+    },
+    {
       fullyQualifiedName: 'postgres.external.risk_tags',
       description: '客户风险标签',
       columns: [

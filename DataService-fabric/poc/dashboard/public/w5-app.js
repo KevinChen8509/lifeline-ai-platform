@@ -8,7 +8,7 @@ const state = {
   services: [],
   domainFilter: '全部',
   search: '',
-  wiz: { filters: [], busy: false },
+  wiz: { filters: [], join: { on: false }, busy: false },
   verify: { slug: '', running: false },
 };
 
@@ -263,7 +263,7 @@ const BUILTIN_TRY_PATH = {
 
 function renderServices() {
   const builtin = state.services.filter((s) => s.service.type === 'builtin');
-  const published = state.services.filter((s) => s.service.type === 'table-query');
+  const published = state.services.filter((s) => s.service.type === 'table-query' || s.service.type === 'fusion');
   renderVerifySelect();
 
   $('#builtin-grid').innerHTML = builtin.map(({ service: s, callCount }) => `
@@ -294,16 +294,28 @@ function renderServices() {
   $('#published-grid').innerHTML = published.map(({ service: s, callCount }) => {
     const filterInputs = s.filters.map((f) => `
       <label style="font-size:12px;color:var(--text-dim)">${esc(f.column)} (${esc(f.operator)})<input data-svc-param="${esc(f.column)}" style="width:120px;margin-left:6px" placeholder="如 ${esc(defaultHint(s.table, f.column))}"></label>`).join('');
+    const joinInfo = s.type === 'fusion' ? s.joins.map((j) => `
+        <div>融合从表：<span class="fqn">${esc(j.fqn)}</span> → 嵌套字段 <code>${esc(j.name)}</code>（${j.columns.length} 列 · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主键 ≤${j.limitPerParent}）</div>`).join('') : '';
+    const keyRow = s.apiKey ? `
+      <div class="wiz-row" style="margin:8px 0 0;min-width:100%">
+        <label style="min-width:auto;font-size:12px">服务 API Key</label>
+        <span class="key-chip">${esc(s.apiKey.slice(0, 10))}…${esc(s.apiKey.slice(-4))}</span>
+        <button class="ghost" data-svc-key="${esc(s.slug)}">📋 复制 Key</button>
+        <span style="font-size:12px;color:var(--text-dim)">仅可调本服务 /query（恒时校验），对外开放用</span>
+      </div>` : '';
+    const typeBadge = s.type === 'fusion' ? '<span class="badge fusion">JOIN</span>' : '';
     return `
     <div class="card" data-slug="${esc(s.slug)}">
-      <h3><span class="badge published">已发布</span>${esc(s.name)}</h3>
+      <h3><span class="badge published">已发布</span>${typeBadge}${esc(s.name)}</h3>
       <div class="svc-path">GET /api/v1/services/${esc(s.slug)}/query</div>
       <div class="desc">${esc(s.description || '（无描述）')}</div>
       <div class="cols">
         <div>返回列：<code>${s.allowedColumns.map(esc).join('</code> <code>')}</code></div>
         <div>过滤参数：${s.filters.length ? s.filters.map((f) => `<code>${esc(f.column)}:${esc(f.operator)}</code>`).join(' ') : '（无）'}</div>
         <div>源表：<span class="fqn">${esc(s.source)}.${esc(s.table)}</span> · 默认 ${s.defaultLimit} 行（上限 500）</div>
+        ${joinInfo}
       </div>
+      ${keyRow}
       <div class="actions" style="flex-direction:column;align-items:flex-start;gap:6px">
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
           ${filterInputs}
@@ -359,7 +371,21 @@ function bindPublishedActions() {
   document.querySelectorAll('[data-svc-curl]').forEach((btn) => {
     btn.onclick = () => {
       const slug = btn.dataset.svcCurl;
-      copyCurl(`curl -H "X-API-Key: <your-api-key>" "http://localhost:8090/api/v1/services/${slug}/query?limit=20"`);
+      const found = state.services.find((s) => s.service.slug === slug)?.service;
+      const keyHint = found?.apiKey ? found.apiKey : '<your-service-key>';
+      copyCurl(`# 第三方直调：服务级 Key（仅本服务 /query 有效）\ncurl -H "X-API-Key: ${keyHint}" "http://localhost:8090/api/v1/services/${slug}/query?limit=20"`);
+    };
+  });
+  document.querySelectorAll('[data-svc-key]').forEach((btn) => {
+    btn.onclick = async () => {
+      const found = state.services.find((s) => s.service.slug === btn.dataset.svcKey)?.service;
+      if (!found?.apiKey) { toast('未取到服务 Key', false); return; }
+      try {
+        await navigator.clipboard.writeText(found.apiKey);
+        toast(`「${found.slug}」服务 Key 已复制 —— 仅可调它自己的 /query`);
+      } catch {
+        toast('复制失败 —— 请手动复制', false);
+      }
     };
   });
   document.querySelectorAll('[data-svc-del]').forEach((btn) => {
@@ -400,6 +426,49 @@ function onWizardTableChange() {
   if (!$('#wiz-slug').value) {
     $('#wiz-slug').value = `${table.source}-${table.table}-query`.replace(/_/g, '-');
   }
+  renderJoinTableOptions(fqn);
+}
+
+/** 融合从表候选：目录中除主表外的所有表 */
+function renderJoinTableOptions(mainFqn) {
+  const sel = $('#wiz-join-table');
+  if (!sel) return;
+  const candidates = state.tables.filter((t) => t.fqn !== mainFqn);
+  sel.innerHTML = candidates.length
+    ? candidates.map((t) => `<option value="${esc(t.fqn)}">${esc(t.fqn)}（${esc(t.description)}）</option>`).join('')
+    : '<option value="">（目录无其他表可融合）</option>';
+  onJoinTableChange();
+}
+
+function onJoinTableChange() {
+  const fqn = $('#wiz-join-table').value;
+  const table = state.tables.find((t) => t.fqn === fqn);
+  const box = $('#wiz-join-columns');
+  if (!table) {
+    box.innerHTML = '<span class="stat-line">无可选从表列</span>';
+    $('#wiz-join-col').innerHTML = '';
+    return;
+  }
+  box.innerHTML = table.columns.map((c) =>
+    `<label><input type="checkbox" data-wiz-join-col="${esc(c.name)}" checked> <code>${esc(c.name)}</code></label>`).join('');
+  $('#wiz-join-col').innerHTML = table.columns.map((c) => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+  // 默认关联键猜 cust_id（客户域演示），存在即选中
+  if (table.columns.some((c) => c.name === 'cust_id')) $('#wiz-join-col').value = 'cust_id';
+  if (!$('#wiz-join-name').value) $('#wiz-join-name').value = table.table;
+  refreshParentColumnOptions();
+}
+
+/** 主表关联列 = 当前勾选的主表返回列（发布校验要求 parentColumn ∈ allowedColumns） */
+function refreshParentColumnOptions() {
+  const sel = $('#wiz-parent-col');
+  if (!sel) return;
+  const prev = sel.value;
+  const checked = [...document.querySelectorAll('[data-wiz-col]:checked')].map((i) => i.dataset.wizCol);
+  sel.innerHTML = checked.length
+    ? checked.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('')
+    : '<option value="">（先勾选主表返回列）</option>';
+  if (checked.includes(prev)) sel.value = prev;
+  else if (checked.includes('cust_id')) sel.value = 'cust_id';
 }
 
 function renderWizardFilters() {
@@ -420,6 +489,23 @@ async function publishFromWizard() {
   if (!name || !slug) { toast('请填写服务名称与 slug', false); return; }
   if (!allowedColumns.length) { toast('至少勾选一个返回列', false); return; }
 
+  // 融合从表（可选）：开关开则组装受控 joins 声明
+  let joins = [];
+  if (state.wiz.join.on) {
+    const joinFqn = $('#wiz-join-table').value;
+    const joinName = $('#wiz-join-name').value.trim();
+    const joinColumns = [...document.querySelectorAll('[data-wiz-join-col]:checked')].map((i) => i.dataset.wizJoinCol);
+    const joinCol = $('#wiz-join-col').value;
+    const parentCol = $('#wiz-parent-col').value;
+    const perParent = +$('#wiz-join-limit').value || 20;
+    if (!joinFqn) { toast('融合从表：目录无其他表可选', false); return; }
+    if (!joinName || !/^[A-Za-z][A-Za-z0-9_]*$/.test(joinName)) { toast('输出字段名须为合法标识符（如 orders）', false); return; }
+    if (!joinColumns.length) { toast('至少勾选一个从表列', false); return; }
+    if (!joinCol || !parentCol) { toast('请选好关联键（从表列 ⇠ 主表列）', false); return; }
+    if (!allowedColumns.includes(parentCol)) { toast(`主表关联列 ${parentCol} 须同时勾选进返回列`, false); return; }
+    joins = [{ fqn: joinFqn, name: joinName, columns: joinColumns, joinColumn: joinCol, parentColumn: parentCol, limitPerParent: perParent }];
+  }
+
   state.wiz.busy = true;
   status.textContent = '发布中…';
   const res = await fetch('/api/w5/services', {
@@ -429,16 +515,18 @@ async function publishFromWizard() {
       slug, name, description: `自助发布：${fqn}`,
       fqn, allowedColumns,
       filters: state.wiz.filters.map((f) => ({ column: f.column, operator: f.op })),
+      joins,
       defaultLimit: +$('#wiz-limit').value || 20,
     }),
   });
   const data = await res.json().catch(() => ({}));
   state.wiz.busy = false;
   if (res.status === 201) {
-    status.innerHTML = `<span class="ok">✓ 已发布：GET /api/v1/services/${esc(slug)}/query</span> <button class="ghost" id="goto-verify">🧪 去验证</button>`;
+    const apiKey = data?.service?.apiKey;
+    status.innerHTML = `<span class="ok">✓ 已发布：GET /api/v1/services/${esc(slug)}/query</span>${apiKey ? ' <span class="key-chip">sk-w6-…已生成</span>' : ''} <button class="ghost" id="goto-verify">🧪 去验证</button>`;
     const gv = $('#goto-verify');
     if (gv) gv.onclick = () => gotoVerify(slug);
-    toast(`「${name}」发布成功 —— 分钟级上线，无需后端排期`);
+    toast(`「${name}」发布成功${joins.length ? '（融合服务）' : ''} —— 服务 Key 已生成，卡片可复制，对外开放就绪`);
     loadServices();
   } else {
     status.innerHTML = `<span class="err">✕ ${esc(data.message ?? `HTTP ${res.status}`)}</span>`;
@@ -460,9 +548,9 @@ function gotoVerify(slug) {
 function renderVerifySelect() {
   const sel = $('#verify-slug');
   if (!sel) return;
-  const published = state.services.filter((s) => s.service.type === 'table-query');
+  const published = state.services.filter((s) => s.service.type === 'table-query' || s.service.type === 'fusion');
   sel.innerHTML = published.length
-    ? published.map(({ service: s }) => `<option value="${esc(s.slug)}">${esc(s.slug)} —— ${esc(s.name)}</option>`).join('')
+    ? published.map(({ service: s }) => `<option value="${esc(s.slug)}">${esc(s.slug)} —— ${esc(s.name)}${s.type === 'fusion' ? '（融合）' : ''}</option>`).join('')
     : '<option value="">（尚无已发布服务 —— 先到服务市场发布）</option>';
   if (state.verify.slug && published.some(({ service: s }) => s.slug === state.verify.slug)) {
     sel.value = state.verify.slug;
@@ -479,13 +567,18 @@ function renderVerifyContract() {
   const box = $('#verify-contract');
   const s = currentVerifyService();
   if (!s) { box.innerHTML = ''; return; }
+  const joinInfo = s.type === 'fusion' ? s.joins.map((j) => `
+    <div>融合从表 <code>${esc(j.name)}</code>：<span class="fqn">${esc(j.fqn)}</span> · 列 [${j.columns.map(esc).join(', ')}] · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主键 ≤${j.limitPerParent}</div>`).join('') : '';
+  const keyRow = s.apiKey ? `<div>服务 Key：<span class="key-chip">${esc(s.apiKey.slice(0, 10))}…${esc(s.apiKey.slice(-4))}</span>（仅本服务 /query 有效 —— 对外分发）</div>` : '';
   box.innerHTML = `
     <div class="card" style="margin-bottom:14px">
-      <h3><span class="badge published">契约快照</span>${esc(s.slug)}</h3>
+      <h3><span class="badge published">契约快照</span>${s.type === 'fusion' ? '<span class="badge fusion">JOIN</span>' : ''}${esc(s.slug)}</h3>
       <div class="cols">
         <div>返回列白名单：<code>${s.allowedColumns.map(esc).join('</code> <code>')}</code></div>
         <div>过滤参数：${s.filters.length ? s.filters.map((f) => `<code>${esc(f.column)}:${esc(f.operator)}</code>`).join(' ') : '（无）'}</div>
         <div>源表：<span class="fqn">${esc(s.source)}.${esc(s.table)}</span> · 默认 ${s.defaultLimit} 行 · LIMIT 上限 500</div>
+        ${joinInfo}
+        ${keyRow}
       </div>
     </div>`;
   const first = s.filters[0];
@@ -514,10 +607,32 @@ async function runVerificationSuite() {
   resultsBox.innerHTML = '<div class="empty">验证套件运行中…</div>';
 
   const first = s.filters[0];
-  const testValue = $('#verify-value').value.trim() || 'VIP3';
+  const testValue = $('#verify-value').value.trim() || defaultHint(s.table, first?.column);
   const rows = [];
   const addRow = (r) => { rows.push(r); resultsBox.innerHTML = verifyTableHtml(rows); };
 
+  if (s.type === 'fusion') {
+    await fusionSuite(s, first, testValue, addRow);
+  } else {
+    await tableQuerySuite(s, first, testValue, addRow);
+  }
+
+  const pass = rows.filter((r) => r.status === 'pass').length;
+  const fail = rows.filter((r) => r.status === 'fail').length;
+  const skip = rows.filter((r) => r.status === 'skip').length;
+  summaryBox.innerHTML = `
+    <div class="verdict ${fail ? 'bad' : 'ok'}">
+      ${fail
+        ? `✕ 验证未通过：${fail} 项 FAIL —— 请检查服务定义后再交付`
+        : `✓ 验证通过：${pass} 项 PASS${skip ? ` · ${skip} 项跳过` : ''} —— 「${esc(s.slug)}」可交付消费方（curl 与服务 Key 复制见服务市场页）`}
+    </div>`;
+  state.verify.running = false;
+  btn.disabled = false;
+  loadServices(); // 刷新调用计数
+}
+
+/** 单表服务 V1-V5 */
+async function tableQuerySuite(s, first, testValue, addRow) {
   // V1 正常调用：形状契约（HTTP 200 + 返回列 = 发布白名单 + 行数 ≤ limit）
   {
     const params = first ? { [first.column]: testValue } : {};
@@ -584,7 +699,7 @@ async function runVerificationSuite() {
           slug: probeSlug, name: '验证探针（应被拒）', description: 'verify probe',
           fqn: table.fqn,
           allowedColumns: [...s.allowedColumns, 'cust_level; DROP TABLE customer'],
-          filters: [], defaultLimit: 5,
+          filters: [], joins: [], defaultLimit: 5,
         }),
       });
       let msg = '';
@@ -601,19 +716,144 @@ async function runVerificationSuite() {
       addRow({ id: 'V5', name: '发布白名单闸', expect: '携带注入列名发布 → HTTP 400', status: 'skip', detail: '目录中未找到该表 FQN（OM 离线？）—— 无法构造发布探针' });
     }
   }
+}
 
-  const pass = rows.filter((r) => r.status === 'pass').length;
-  const fail = rows.filter((r) => r.status === 'fail').length;
-  const skip = rows.filter((r) => r.status === 'skip').length;
-  summaryBox.innerHTML = `
-    <div class="verdict ${fail ? 'bad' : 'ok'}">
-      ${fail
-        ? `✕ 验证未通过：${fail} 项 FAIL —— 请检查服务定义后再交付`
-        : `✓ 验证通过：${pass} 项 PASS${skip ? ` · ${skip} 项跳过` : ''} —— 「${esc(s.slug)}」可交付消费方（curl 复制见服务市场页）`}
-    </div>`;
-  state.verify.running = false;
-  btn.disabled = false;
-  loadServices(); // 刷新调用计数
+/** 融合服务 FV1-FV7：形状 · 注入 · 未知参数 · LIMIT/每主键钳制 · 发布闸 · 关联一致性 · 金标 */
+async function fusionSuite(s, first, testValue, addRow) {
+  const nestedCount = (d) => (d?.rows ?? []).reduce(
+    (n, row) => n + s.joins.reduce((m, j) => m + (Array.isArray(row[j.name]) ? row[j.name].length : -1), 0), 0);
+
+  // FV1 融合形状：200 + 主列=白名单 + 嵌套字段名=声明 + 每主行都挂数组
+  {
+    const params = first ? { [first.column]: testValue } : {};
+    const r = await callVerifyQuery(s.slug, { ...params, limit: 5 });
+    const d = r.data ?? {};
+    const cols = d.columns ?? [];
+    const whitelist = new Set(s.allowedColumns);
+    const joinNames = (d.joins ?? []).map((j) => j.name);
+    const shapeOk = r.http === 200
+      && cols.length === s.allowedColumns.length && cols.every((c) => whitelist.has(c))
+      && joinNames.join(',') === s.joins.map((j) => j.name).join(',')
+      && (d.rows ?? []).every((row) => s.joins.every((j) => Array.isArray(row[j.name])));
+    addRow({
+      id: 'FV1', name: '融合形状', expect: 'HTTP 200 · 主列=白名单 · 嵌套字段名=声明 · 每主行挂从行数组',
+      status: shapeOk ? 'pass' : 'fail',
+      detail: `HTTP ${r.http} · ${d.rows?.length ?? '?'} 主行 · 嵌套 [${joinNames.join(', ')}] · ${r.elapsed}ms`,
+    });
+  }
+
+  // FV2 注入防御：关联参数 OR 恒真 → 200 且 0 主行 0 从行
+  if (first) {
+    const payload = `${testValue}' OR '1'='1`;
+    const r = await callVerifyQuery(s.slug, { [first.column]: payload, limit: 5 });
+    const d = r.data ?? {};
+    const safe = r.http === 200 && (d.total ?? -1) === 0 && nestedCount(d) === 0;
+    addRow({
+      id: 'FV2', name: 'SQL 注入防御', expect: `payload「…' OR '1'='1」→ 200 · 0 主行 · 0 从行`,
+      status: safe ? 'pass' : 'fail',
+      detail: `HTTP ${r.http} · total=${d.total ?? '?'} · 从行 ${nestedCount(d)} · ${r.elapsed}ms`,
+    });
+  } else {
+    addRow({ id: 'FV2', name: 'SQL 注入防御', expect: 'payload → 200 · 0 主行 0 从行', status: 'skip', detail: '服务未配置过滤参数 —— 无值入口' });
+  }
+
+  // FV3 未知参数拒绝 → 400
+  {
+    const r = await callVerifyQuery(s.slug, { __bogus_param: 'x' });
+    const msg = String(r.data?.message ?? r.data?.error ?? '');
+    addRow({
+      id: 'FV3', name: '未知参数拒绝', expect: '未注册参数 __bogus_param → HTTP 400',
+      status: r.http === 400 ? 'pass' : 'fail',
+      detail: `HTTP ${r.http} · ${msg.slice(0, 80)}`,
+    });
+  }
+
+  // FV4 钳制：主行 ≤500 且每主键从行 ≤ limitPerParent
+  {
+    const r = await callVerifyQuery(s.slug, { limit: 99999 });
+    const d = r.data ?? {};
+    const mainRows = d.rows?.length ?? 1e9;
+    const cap = Math.max(...s.joins.map((j) => j.limitPerParent));
+    const maxNested = (d.rows ?? []).reduce(
+      (m, row) => Math.max(m, ...s.joins.map((j) => (Array.isArray(row[j.name]) ? row[j.name].length : 0))), 0);
+    const ok = r.http === 200 && mainRows <= 500 && maxNested <= cap;
+    addRow({
+      id: 'FV4', name: 'LIMIT/每主键钳制', expect: `limit=99999 → 主行 ≤500 · 每主键从行 ≤${cap}`,
+      status: ok ? 'pass' : 'fail',
+      detail: `HTTP ${r.http} · ${mainRows > 1e8 ? '?' : mainRows} 主行 · 单主键最多 ${maxNested} 从行`,
+    });
+  }
+
+  // FV5 发布白名单闸（融合）：从表列塞注入 payload → 400
+  {
+    const mainTable = state.tables.find((t) => t.source === s.source && t.table === s.table);
+    const j = s.joins[0];
+    if (mainTable && j) {
+      const probeSlug = `verify-probe-${Date.now()}`;
+      const res = await fetch('/api/w5/services', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slug: probeSlug, name: '验证探针（应被拒）', description: 'verify probe',
+          fqn: mainTable.fqn,
+          allowedColumns: s.allowedColumns, filters: [], defaultLimit: 5,
+          joins: [{ ...j, columns: [j.columns[0], 'cust_id; DROP TABLE orders'] }],
+        }),
+      });
+      let msg = '';
+      try { msg = (await res.json()).message ?? ''; } catch { /* ignore */ }
+      if (res.status === 201) {
+        await fetch(`/api/w5/services/${encodeURIComponent(probeSlug)}`, { method: 'DELETE' });
+      }
+      addRow({
+        id: 'FV5', name: '发布白名单闸', expect: '融合声明塞「cust_id; DROP TABLE orders」列 → HTTP 400',
+        status: res.status === 400 ? 'pass' : 'fail',
+        detail: `HTTP ${res.status} · ${String(msg).slice(0, 90)}`,
+      });
+    } else {
+      addRow({ id: 'FV5', name: '发布白名单闸', expect: '融合声明塞注入列 → HTTP 400', status: 'skip', detail: '目录中未找到主/从表 FQN（OM 离线？）' });
+    }
+  }
+
+  // FV6 关联一致性：每个嵌套从行关联键 == 主行关联值，且 total == 主行数
+  {
+    const params = first ? { [first.column]: testValue } : {};
+    const r = await callVerifyQuery(s.slug, { ...params, limit: 20 });
+    const d = r.data ?? {};
+    let mismatch = 0;
+    for (const j of s.joins) {
+      for (const row of d.rows ?? []) {
+        const pv = row[j.parentColumn];
+        for (const child of row[j.name] ?? []) {
+          if (String(child[j.joinColumn] ?? '') !== String(pv ?? '')) mismatch++;
+        }
+      }
+    }
+    const consistent = r.http === 200 && mismatch === 0 && (d.total ?? -1) === (d.rows ?? []).length;
+    addRow({
+      id: 'FV6', name: '关联一致性', expect: `每个从行 ${s.joins.map((j) => `${j.joinColumn}==主行${j.parentColumn}`).join(' · ')} · total=主行数`,
+      status: consistent ? 'pass' : 'fail',
+      detail: `不一致 ${mismatch} 条 · total=${d.total ?? '?'} / ${d.rows?.length ?? '?'} 主行`,
+    });
+  }
+
+  // FV7 金标用例：customer×orders 种子已知值 C0001 → 张伟 + 2 单
+  {
+    const ordersJoin = s.joins.find((j) => j.fqn.endsWith('.orders'));
+    if (s.table === 'customer' && ordersJoin) {
+      const hasCustIdFilter = s.filters.some((f) => f.column === 'cust_id');
+      const r = await callVerifyQuery(s.slug, hasCustIdFilter ? { cust_id: 'C0001' } : { limit: 20 });
+      const row = (r.data?.rows ?? []).find((x) => x.cust_id === 'C0001');
+      const golden = r.http === 200 && row?.cust_name === '张伟' && row?.[ordersJoin.name]?.length === 2;
+      addRow({
+        id: 'FV7', name: '金标用例', expect: 'C0001 → 张伟 + 2 笔订单（H2 种子已知值）',
+        status: golden ? 'pass' : 'fail',
+        detail: row ? `${row.cust_name} · ${row[ordersJoin.name]?.length ?? 0} 单` : '未取到 C0001 主行',
+      });
+    } else {
+      addRow({ id: 'FV7', name: '金标用例', expect: '种子已知值比对', status: 'skip', detail: '仅 customer×orders 融合服务带金标（演示种子）' });
+    }
+  }
 }
 
 function verifyTableHtml(rows) {
@@ -639,6 +879,13 @@ function verifyTableHtml(rows) {
 document.querySelectorAll('.tab-btn').forEach((b) => { b.onclick = () => switchTab(b.dataset.tab); });
 $('#catalog-search').oninput = (e) => { state.search = e.target.value; renderCatalog(); };
 $('#wiz-table').onchange = onWizardTableChange;
+$('#wiz-columns').onchange = () => refreshParentColumnOptions(); // 主表勾选变化 → 联动关联主表列候选
+$('#wiz-join-on').onchange = (e) => {
+  state.wiz.join.on = e.target.checked;
+  $('#wiz-join-block').style.display = e.target.checked ? 'block' : 'none';
+  if (e.target.checked) onJoinTableChange();
+};
+$('#wiz-join-table').onchange = onJoinTableChange;
 $('#wiz-add-filter').onclick = () => {
   const col = $('#wiz-filter-col').value;
   const op = $('#wiz-filter-op').value;

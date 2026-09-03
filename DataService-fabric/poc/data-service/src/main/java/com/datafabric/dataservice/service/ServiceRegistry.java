@@ -6,8 +6,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -17,11 +21,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
 /**
- * W5 服务注册表（内存态 PoC）：
- * builtin 静态 6 条 + 自助发布 table-query 条目；发布校验是防注入的第一道闸 ——
- * 列名必须逐字命中 OpenMetadata 元数据，杜绝任意标识符进 SQL。
+ * W5/W6 服务注册表（内存态 PoC）：
+ * builtin 静态 6 条 + 自助发布 table-query / fusion 条目；发布校验是防注入的第一道闸 ——
+ * 主表/从表的列名与关联键必须逐字命中 OpenMetadata 元数据，杜绝任意标识符进 SQL。
  *
- * Phase 3+ 边界（团队章程支柱④）：持久化、订阅/API Key 分发、限流计量。
+ * W6-A 对外开放：发布即生成服务级 API Key（仅可调用自身 /query，双通道见 SecurityConfig）。
+ *
+ * Phase 3+ 边界（团队章程支柱④）：持久化、key 吊销/过期、限流计量。
  */
 @Service
 public class ServiceRegistry {
@@ -33,12 +39,19 @@ public class ServiceRegistry {
     private static final Set<String> OPERATORS = Set.of("eq", "like", "gte", "lte");
     private static final Set<String> SOURCES = Set.of("mysql", "clickhouse", "postgres");
     private static final int MAX_LIMIT = 500;
+    private static final int MAX_JOINS = 2;
+    private static final int MAX_PER_PARENT = 50;
+    private static final SecureRandom RANDOM = new SecureRandom();
 
-    /** 发布请求体（fqn 为目录表全限定名，table 取其末段） */
+    /** 发布请求体（fqn 为主表目录全限定名，table 取其末段；joins 非空 → fusion 形态） */
     public record PublishRequest(
             String slug, String name, String description, String fqn,
             List<String> allowedColumns, List<ServiceDefinition.FilterSpec> filters,
-            Integer defaultLimit) {}
+            List<JoinRequest> joins, Integer defaultLimit) {}
+
+    /** 融合从表发布声明 */
+    public record JoinRequest(String fqn, String name, List<String> columns,
+                              String joinColumn, String parentColumn, Integer limitPerParent) {}
 
     private final OpenMetadataClient omClient;
     private final Map<String, ServiceDefinition> published = new ConcurrentHashMap<>();
@@ -51,24 +64,24 @@ public class ServiceRegistry {
     private static final List<ServiceDefinition> BUILTIN = List.of(
             new ServiceDefinition("customer-profile", "客户画像", "单客户全量画像（脱敏 + 审计 + 血缘三切面）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers/{custId}/profile",
-                    null, null, List.of(), List.of(), 1, null),
+                    null, null, List.of(), List.of(), List.of(), 1, null, null),
             new ServiceDefinition("customer-brief", "客户简报", "简要画像（强制隐藏身份证与风险分）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers/{custId}/brief",
-                    null, null, List.of(), List.of(), 1, null),
+                    null, null, List.of(), List.of(), List.of(), 1, null, null),
             new ServiceDefinition("customer-search", "客户分群查询", "按等级/风险过滤 + 分页（F7 服务端过滤）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers?level={level}&riskLevel={riskLevel}&page={page}&size={size}",
-                    null, null, List.of(), List.of(), 20, null),
+                    null, null, List.of(), List.of(), List.of(), 20, null, null),
             new ServiceDefinition("customer-overview", "客户总览指标", "ARPU / VIP3 / 风险分布快照（Cube 语义层）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/metrics/customer-overview",
-                    null, null, List.of(), List.of(), 1, null),
+                    null, null, List.of(), List.of(), List.of(), 1, null, null),
             new ServiceDefinition("agent-insight", "AI 治理问答（A 路）", "自然语言 → 治理校验 + 审计血缘落账 → 语义层查询",
                     ServiceDefinition.TYPE_BUILTIN, "POST", "/api/v1/agent/insight",
-                    null, null, List.of(), List.of(), 1, null),
+                    null, null, List.of(), List.of(), List.of(), 1, null, null),
             new ServiceDefinition("agent-raw", "AI 直连问答（B 路）", "自然语言 → 直连 JDBC（无治理对照）",
                     ServiceDefinition.TYPE_BUILTIN, "POST", "/api/v1/agent/raw",
-                    null, null, List.of(), List.of(), 1, null));
+                    null, null, List.of(), List.of(), List.of(), 1, null, null));
 
-    /** 发布一个 table-query 服务（校验失败抛 IllegalArgumentException → 400） */
+    /** 发布一个 table-query / fusion 服务（校验失败抛 IllegalArgumentException → 400） */
     public ServiceDefinition publish(PublishRequest req) {
         String slug = requireMatch(req.slug(), SLUG_PATTERN, "slug 仅允许小写字母/数字/连字符，2-63 位");
         if (isBuiltin(slug) || published.containsKey(slug)) {
@@ -87,7 +100,7 @@ public class ServiceRegistry {
         String table = lastSegment(req.fqn());
         requireMatch(table, IDENTIFIER_PATTERN, "表名不合法: " + table);
 
-        // 第一道闸：列白名单必须逐字命中 OM 元数据（OM 离线时拒绝发布，不降低校验强度）
+        // 第一道闸（主表）：列白名单必须逐字命中 OM 元数据（OM 离线时拒绝发布，不降低校验强度）
         Set<String> metaColumns = metadataColumns(req.fqn());
         if (metaColumns.isEmpty()) {
             throw new IllegalArgumentException("目录元数据不可用或表不存在: " + req.fqn() + "，发布前请确认 OpenMetadata 在线");
@@ -104,18 +117,87 @@ public class ServiceRegistry {
         }
         List<ServiceDefinition.FilterSpec> filters = normalizeFilters(req.filters(), columns);
 
+        // 第一道闸（融合从表）：列/关联键逐字命中从表 OM 元数据，主表关联键 ∈ 主表白名单
+        List<ServiceDefinition.JoinSpec> joins = normalizeJoins(req.joins(), columns);
+
         int defaultLimit = req.defaultLimit() == null ? 20 : req.defaultLimit();
         if (defaultLimit < 1 || defaultLimit > MAX_LIMIT) {
             throw new IllegalArgumentException("defaultLimit 必须在 1-" + MAX_LIMIT + " 之间");
         }
 
+        String type = joins.isEmpty() ? ServiceDefinition.TYPE_TABLE_QUERY : ServiceDefinition.TYPE_FUSION;
         ServiceDefinition def = new ServiceDefinition(slug, req.name().trim(),
                 req.description() == null ? "" : req.description().trim(),
-                ServiceDefinition.TYPE_TABLE_QUERY, null, null,
-                source, table, List.copyOf(columns), filters, defaultLimit, Instant.now());
+                type, null, null,
+                source, table, List.copyOf(columns), filters, joins, defaultLimit,
+                generateApiKey(), Instant.now());
         published.put(slug, def);
-        log.info("服务发布: {} -> {} ({} 列 / {} 过滤参数)", slug, req.fqn(), columns.size(), filters.size());
+        log.info("服务发布: {} -> {} ({} 列 / {} 过滤参数 / {} 融合从表 / key=sk-…{})",
+                slug, req.fqn(), columns.size(), filters.size(), joins.size(),
+                def.apiKey().substring(def.apiKey().length() - 4));
         return def;
+    }
+
+    /** 融合从表校验链（受限 DSL：不开放任意 SQL，标识符全部来自元数据白名单） */
+    private List<ServiceDefinition.JoinSpec> normalizeJoins(
+            List<JoinRequest> joins, List<String> mainColumns) {
+        if (joins == null || joins.isEmpty()) {
+            return List.of();
+        }
+        if (joins.size() > MAX_JOINS) {
+            throw new IllegalArgumentException("融合从表最多 " + MAX_JOINS + " 个（不做递归融合）");
+        }
+        List<ServiceDefinition.JoinSpec> out = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        for (JoinRequest j : joins) {
+            if (j == null || j.fqn() == null || !j.fqn().contains(".")) {
+                throw new IllegalArgumentException("joins.fqn 必须是从表目录全限定名");
+            }
+            String joinName = requireMatch(j.name(), IDENTIFIER_PATTERN, "join.name 不合法: " + j.name());
+            if (names.contains(joinName)) {
+                throw new IllegalArgumentException("join.name 重复: " + joinName);
+            }
+            names.add(joinName);
+
+            String joinSource = j.fqn().substring(0, j.fqn().indexOf('.')).toLowerCase(Locale.ROOT);
+            if (!SOURCES.contains(joinSource)) {
+                throw new IllegalArgumentException("从表不支持的源: " + joinSource);
+            }
+            String joinTable = lastSegment(j.fqn());
+            requireMatch(joinTable, IDENTIFIER_PATTERN, "从表名不合法: " + joinTable);
+
+            Set<String> joinMeta = metadataColumns(j.fqn());
+            if (joinMeta.isEmpty()) {
+                throw new IllegalArgumentException("从表目录元数据不可用或不存在: " + j.fqn());
+            }
+            List<String> joinColumns = j.columns() == null ? List.of() : j.columns();
+            if (joinColumns.isEmpty()) {
+                throw new IllegalArgumentException("join " + joinName + " 的 columns 至少选择一列");
+            }
+            for (String col : joinColumns) {
+                requireMatch(col, IDENTIFIER_PATTERN, "从表列名不合法: " + col);
+                if (!joinMeta.contains(col)) {
+                    throw new IllegalArgumentException("从表列 " + col + " 不在目录表 " + j.fqn() + " 的元数据中");
+                }
+            }
+            String joinColumn = requireMatch(j.joinColumn(), IDENTIFIER_PATTERN,
+                    "joinColumn 不合法: " + j.joinColumn());
+            if (!joinMeta.contains(joinColumn)) {
+                throw new IllegalArgumentException("joinColumn " + joinColumn + " 不在从表 " + j.fqn() + " 的元数据中");
+            }
+            String parentColumn = requireMatch(j.parentColumn(), IDENTIFIER_PATTERN,
+                    "parentColumn 不合法: " + j.parentColumn());
+            if (!mainColumns.contains(parentColumn)) {
+                throw new IllegalArgumentException("parentColumn " + parentColumn + " 必须同时在主表 allowedColumns 中");
+            }
+            int perParent = j.limitPerParent() == null ? 20 : j.limitPerParent();
+            if (perParent < 1 || perParent > MAX_PER_PARENT) {
+                throw new IllegalArgumentException("limitPerParent 必须在 1-" + MAX_PER_PARENT + " 之间");
+            }
+            out.add(new ServiceDefinition.JoinSpec(j.fqn(), joinName, List.copyOf(joinColumns),
+                    joinColumn, parentColumn, perParent));
+        }
+        return List.copyOf(out);
     }
 
     private static List<ServiceDefinition.FilterSpec> normalizeFilters(
@@ -190,8 +272,29 @@ public class ServiceRegistry {
         return c == null ? 0 : c.get();
     }
 
+    /**
+     * 服务级 key 校验（恒时比较）：仅对【自助发布且持有 apiKey】的 slug 有效。
+     * 供 SecurityConfig 双通道使用 —— 服务 key 只能敲自己 slug 的 /query。
+     */
+    public boolean isValidServiceKey(String slug, String providedKey) {
+        if (slug == null || providedKey == null) {
+            return false;
+        }
+        ServiceDefinition def = published.get(slug);
+        return def != null && def.apiKey() != null
+                && MessageDigest.isEqual(def.apiKey().getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        providedKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     public static int maxLimit() {
         return MAX_LIMIT;
+    }
+
+    /** sk-w6- + 32 hex 随机（发布时生成一次，注册表内存态 PoC） */
+    private static String generateApiKey() {
+        byte[] buf = new byte[16];
+        RANDOM.nextBytes(buf);
+        return "sk-w6-" + HexFormat.of().formatHex(buf);
     }
 
     private static String lastSegment(String fqn) {
