@@ -47,6 +47,11 @@ datafabric:
     cache-ttl-seconds: 300
     top-k: 3
     max-tables: 200
+  # W6-B 注册表持久化（平台自有 H2 文件库；库不可达时降级内存态，boot 不炸）
+  registry-db:
+    url: ${REGISTRY_DB_URL:jdbc:h2:file:./data/registry;MODE=MySQL}
+    user: ${REGISTRY_DB_USER:sa}
+    password: ${REGISTRY_DB_PASSWORD:}
 
 # Actuator 端点（health 不鉴权；show-details 改 when_authorized 防泄漏）
 management:

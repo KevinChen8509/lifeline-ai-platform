@@ -3,6 +3,7 @@ package com.datafabric.dataservice.api;
 import com.datafabric.dataservice.service.ServiceDefinition;
 import com.datafabric.dataservice.service.ServiceNotFoundException;
 import com.datafabric.dataservice.service.ServiceRegistry;
+import com.datafabric.dataservice.service.ServiceRegistryStore;
 import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,12 +35,16 @@ import java.util.regex.Pattern;
  *   - 自助发布：POST /api/v1/services（校验见 ServiceRegistry；融合声明见 joins）
  *   - 试调：GET /api/v1/services/{slug}/query（table-query / fusion）
  *   - 下线：DELETE /api/v1/services/{slug}
+ *   - W6-B 运营：POST /{slug}/key/rotate · POST /{slug}/key/revoke · GET /{slug}/usage
  *
  * SQL 安全（发布期白名单 + 执行期复检 + 全参数绑定）：
  *   - 标识符（表/列/关联键）只能来自注册表，执行时再过 ^[A-Za-z0-9_]+$ 二次复检
  *   - 值一律 PreparedStatement ? 绑定（与 F4 红队验证同一防线）；融合从表的
  *     关联值同样走 IN (?,…) 绑定 —— 即便来自主表查询结果也不拼 SQL
  *   - LIMIT 钳制 1..500；融合从表另加每主键 limitPerParent 钳制
+ *
+ * W6-B 限流：/query 每服务每分钟固定窗口（KeyPolicy.rateLimitPerMin，默认 60），
+ * 超限 429 + Retry-After（全局 key 经 dashboard 代理的试调同样计数）。
  */
 @RestController
 @RequestMapping("/api/v1/services")
@@ -98,6 +103,32 @@ public class ServiceMarketplaceController {
                 .orElseThrow(() -> new ServiceNotFoundException(slug));
     }
 
+    /** W6-B key 动作请求体（rotate 可选重置有效期；revoke 忽略 body） */
+    public record KeyActionRequest(Long keyTtlHours) {}
+
+    /** 轮换 key：旧 key 立即失效，返回带新 key 的服务视图（全局 key 权限） */
+    @PostMapping("/{slug}/key/rotate")
+    public ServiceView rotateKey(@PathVariable String slug,
+            @RequestBody(required = false) KeyActionRequest req) {
+        Long ttl = req == null ? null : req.keyTtlHours();
+        return new ServiceView(registry.rotateKey(slug, ttl), registry.callCount(slug));
+    }
+
+    /** 吊销 key：立即失效（401）；rotate 可复活 */
+    @PostMapping("/{slug}/key/revoke")
+    public ServiceView revokeKey(@PathVariable String slug) {
+        return new ServiceView(registry.revokeKey(slug), registry.callCount(slug));
+    }
+
+    /** 每日用量：总量 / 今日 / 近 14 天明细 */
+    @GetMapping("/{slug}/usage")
+    public ServiceRegistryStore.UsageSummary usage(@PathVariable String slug) {
+        if (registry.find(slug).isEmpty()) {
+            throw new ServiceNotFoundException(slug);
+        }
+        return registry.usage(slug);
+    }
+
     @DeleteMapping("/{slug}")
     public ResponseEntity<Void> remove(@PathVariable String slug) {
         registry.remove(slug);
@@ -111,6 +142,9 @@ public class ServiceMarketplaceController {
                 .orElseThrow(() -> new ServiceNotFoundException(slug));
         if (ServiceDefinition.TYPE_BUILTIN.equals(def.type())) {
             throw new IllegalArgumentException("内置服务请直接调用其端点: " + def.method() + " " + def.pathTemplate());
+        }
+        if (!registry.tryAcquire(slug)) {
+            throw new RateLimitException(slug);
         }
 
         String limitRaw = params.remove("limit");
@@ -319,6 +353,13 @@ public class ServiceMarketplaceController {
         }
     }
 
+    /** 每分钟调用上限（固定窗口）→ 429 */
+    public static class RateLimitException extends RuntimeException {
+        public RateLimitException(String slug) {
+            super("每分钟调用上限已达到: " + slug);
+        }
+    }
+
     @ExceptionHandler(ServiceNotFoundException.class)
     public ResponseEntity<Map<String, Object>> handleNotFound(ServiceNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
@@ -329,5 +370,12 @@ public class ServiceMarketplaceController {
     public ResponseEntity<Map<String, Object>> handleSourceDown(SourceUnavailableException ex) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(Map.of("error", "SOURCE_UNAVAILABLE", "message", ex.getMessage()));
+    }
+
+    @ExceptionHandler(RateLimitException.class)
+    public ResponseEntity<Map<String, Object>> handleRateLimit(RateLimitException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "60")
+                .body(Map.of("error", "RATE_LIMITED", "message", "每分钟调用上限已达到，请稍后重试"));
     }
 }

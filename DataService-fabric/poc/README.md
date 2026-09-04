@@ -243,3 +243,4 @@ Week 1 完成后，进入 Week 2（语义层 + 治理嵌入 + 服务层）：
 | Week 4 | F 系列生产化加固 + Agent 可观测台 | `WEEK4-RESULTS.md` |
 | Week 5 | 数据服务市场（资源目录 + 业务场景 + 自助发布 API） | `WEEK5-RESULTS.md` |
 | Week 6 | 跨表融合定制接口 + 服务级 API Key 对外开放 | `WEEK6-RESULTS.md` |
+| Week 6-B | 服务运营化：注册表持久化 + Key 生命周期 + 限流计量 | `WEEK6B-RESULTS.md` |

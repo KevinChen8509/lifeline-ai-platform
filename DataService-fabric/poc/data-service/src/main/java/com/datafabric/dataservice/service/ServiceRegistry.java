@@ -21,11 +21,13 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
 /**
- * W5/W6 服务注册表（内存态 PoC）：
+ * W5/W6 服务注册表：
  * builtin 静态 6 条 + 自助发布 table-query / fusion 条目；发布校验是防注入的第一道闸 ——
  * 主表/从表的列名与关联键必须逐字命中 OpenMetadata 元数据，杜绝任意标识符进 SQL。
  *
  * W6-A 对外开放：发布即生成服务级 API Key（仅可调用自身 /query，双通道见 SecurityConfig）。
+ * W6-B 运营化：注册表持久化（ServiceRegistryStore，@PostConstruct 灌回，重启 Key 不变）
+ * + key 轮换/吊销/过期 + 按服务每分钟固定窗口限流 + 每日用量计量。
  *
  * Phase 3+ 边界（团队章程支柱④）：持久化、key 吊销/过期、限流计量。
  */
@@ -41,45 +43,66 @@ public class ServiceRegistry {
     private static final int MAX_LIMIT = 500;
     private static final int MAX_JOINS = 2;
     private static final int MAX_PER_PARENT = 50;
+    private static final int DEFAULT_RATE_LIMIT_PER_MIN = 60;
+    private static final int MAX_RATE_LIMIT_PER_MIN = 600;
+    private static final long MAX_TTL_HOURS = 24L * 365 * 10;
+    private static final long RATE_WINDOW_MS = 60_000;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     /** 发布请求体（fqn 为主表目录全限定名，table 取其末段；joins 非空 → fusion 形态） */
     public record PublishRequest(
             String slug, String name, String description, String fqn,
             List<String> allowedColumns, List<ServiceDefinition.FilterSpec> filters,
-            List<JoinRequest> joins, Integer defaultLimit) {}
+            List<JoinRequest> joins, Integer defaultLimit,
+            Integer rateLimitPerMin, Long keyTtlHours) {}
 
     /** 融合从表发布声明 */
     public record JoinRequest(String fqn, String name, List<String> columns,
                               String joinColumn, String parentColumn, Integer limitPerParent) {}
 
     private final OpenMetadataClient omClient;
+    private final ServiceRegistryStore store;
     private final Map<String, ServiceDefinition> published = new ConcurrentHashMap<>();
     private final Map<String, AtomicLong> callCounts = new ConcurrentHashMap<>();
+    /** 固定窗口限流：slug -> [windowStart, count]（ConcurrentHashMap.compute 原子更新） */
+    private final Map<String, long[]> rateWindows = new ConcurrentHashMap<>();
 
-    public ServiceRegistry(OpenMetadataClient omClient) {
+    public ServiceRegistry(OpenMetadataClient omClient, ServiceRegistryStore store) {
         this.omClient = omClient;
+        this.store = store;
+    }
+
+    /** 启动灌回持久化注册表（重启后服务与 Key 不变；库不可达时 loadAll 返回空 = 全新注册表） */
+    @jakarta.annotation.PostConstruct
+    void loadPersisted() {
+        List<ServiceDefinition> restored = store.loadAll();
+        for (ServiceDefinition def : restored) {
+            published.put(def.slug(), def);
+        }
+        if (!restored.isEmpty()) {
+            log.info("注册表持久化恢复: {} 个自助发布服务（key 保持不变）", restored.size());
+        }
     }
 
     private static final List<ServiceDefinition> BUILTIN = List.of(
             new ServiceDefinition("customer-profile", "客户画像", "单客户全量画像（脱敏 + 审计 + 血缘三切面）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers/{custId}/profile",
-                    null, null, List.of(), List.of(), List.of(), 1, null, null),
+                    null, null, List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("customer-brief", "客户简报", "简要画像（强制隐藏身份证与风险分）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers/{custId}/brief",
-                    null, null, List.of(), List.of(), List.of(), 1, null, null),
+                    null, null, List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("customer-search", "客户分群查询", "按等级/风险过滤 + 分页（F7 服务端过滤）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers?level={level}&riskLevel={riskLevel}&page={page}&size={size}",
-                    null, null, List.of(), List.of(), List.of(), 20, null, null),
+                    null, null, List.of(), List.of(), List.of(), 20, null, null, null),
             new ServiceDefinition("customer-overview", "客户总览指标", "ARPU / VIP3 / 风险分布快照（Cube 语义层）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/metrics/customer-overview",
-                    null, null, List.of(), List.of(), List.of(), 1, null, null),
+                    null, null, List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("agent-insight", "AI 治理问答（A 路）", "自然语言 → 治理校验 + 审计血缘落账 → 语义层查询",
                     ServiceDefinition.TYPE_BUILTIN, "POST", "/api/v1/agent/insight",
-                    null, null, List.of(), List.of(), List.of(), 1, null, null),
+                    null, null, List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("agent-raw", "AI 直连问答（B 路）", "自然语言 → 直连 JDBC（无治理对照）",
                     ServiceDefinition.TYPE_BUILTIN, "POST", "/api/v1/agent/raw",
-                    null, null, List.of(), List.of(), List.of(), 1, null, null));
+                    null, null, List.of(), List.of(), List.of(), 1, null, null, null));
 
     /** 发布一个 table-query / fusion 服务（校验失败抛 IllegalArgumentException → 400） */
     public ServiceDefinition publish(PublishRequest req) {
@@ -124,18 +147,40 @@ public class ServiceRegistry {
         if (defaultLimit < 1 || defaultLimit > MAX_LIMIT) {
             throw new IllegalArgumentException("defaultLimit 必须在 1-" + MAX_LIMIT + " 之间");
         }
+        int rateLimitPerMin = req.rateLimitPerMin() == null
+                ? DEFAULT_RATE_LIMIT_PER_MIN : req.rateLimitPerMin();
+        if (rateLimitPerMin < 1 || rateLimitPerMin > MAX_RATE_LIMIT_PER_MIN) {
+            throw new IllegalArgumentException("rateLimitPerMin 必须在 1-" + MAX_RATE_LIMIT_PER_MIN + " 之间");
+        }
+        Instant keyExpiresAt = ttlToExpiry(req.keyTtlHours());
 
         String type = joins.isEmpty() ? ServiceDefinition.TYPE_TABLE_QUERY : ServiceDefinition.TYPE_FUSION;
         ServiceDefinition def = new ServiceDefinition(slug, req.name().trim(),
                 req.description() == null ? "" : req.description().trim(),
                 type, null, null,
                 source, table, List.copyOf(columns), filters, joins, defaultLimit,
-                generateApiKey(), Instant.now());
+                generateApiKey(),
+                new ServiceDefinition.KeyPolicy(
+                        ServiceDefinition.KeyPolicy.STATUS_ACTIVE, keyExpiresAt, rateLimitPerMin),
+                Instant.now());
         published.put(slug, def);
-        log.info("服务发布: {} -> {} ({} 列 / {} 过滤参数 / {} 融合从表 / key=sk-…{})",
+        store.save(def);
+        log.info("服务发布: {} -> {} ({} 列 / {} 过滤参数 / {} 融合从表 / key=sk-…{} / 限流 {}/min / 过期 {})",
                 slug, req.fqn(), columns.size(), filters.size(), joins.size(),
-                def.apiKey().substring(def.apiKey().length() - 4));
+                def.apiKey().substring(def.apiKey().length() - 4),
+                rateLimitPerMin, keyExpiresAt == null ? "永久" : keyExpiresAt);
         return def;
+    }
+
+    /** ttlHours 可空=永久；1..MAX_TTL_HOURS → 过期时刻；越界 400 */
+    private static Instant ttlToExpiry(Long keyTtlHours) {
+        if (keyTtlHours == null) {
+            return null;
+        }
+        if (keyTtlHours < 1 || keyTtlHours > MAX_TTL_HOURS) {
+            throw new IllegalArgumentException("keyTtlHours 必须在 1-" + MAX_TTL_HOURS + " 之间（小时）");
+        }
+        return Instant.now().plusSeconds(keyTtlHours * 3600);
     }
 
     /** 融合从表校验链（受限 DSL：不开放任意 SQL，标识符全部来自元数据白名单） */
@@ -260,11 +305,14 @@ public class ServiceRegistry {
             throw new ServiceNotFoundException(slug);
         }
         callCounts.remove(slug);
+        rateWindows.remove(slug);
+        store.delete(slug);
         log.info("服务下线: {}", slug);
     }
 
     public void recordCall(String slug) {
         callCounts.computeIfAbsent(slug, k -> new AtomicLong()).incrementAndGet();
+        store.recordUsage(slug);
     }
 
     public long callCount(String slug) {
@@ -272,8 +320,75 @@ public class ServiceRegistry {
         return c == null ? 0 : c.get();
     }
 
+    /** 每日用量（近 14 天 + 总量/今日），由 controller /usage 端点透出 */
+    public ServiceRegistryStore.UsageSummary usage(String slug) {
+        return store.usage(slug);
+    }
+
     /**
-     * 服务级 key 校验（恒时比较）：仅对【自助发布且持有 apiKey】的 slug 有效。
+     * 固定窗口每分钟限流（作用于 /query，全局 key 与服务 key 同计数）：
+     * builtin / 无策略服务不限；窗口滑过自动归零。
+     */
+    public boolean tryAcquire(String slug) {
+        ServiceDefinition def = published.get(slug);
+        if (def == null || def.keyPolicy() == null) {
+            return true;
+        }
+        int limit = def.keyPolicy().rateLimitPerMin();
+        if (limit <= 0) {
+            return true;
+        }
+        long window = System.currentTimeMillis() / RATE_WINDOW_MS;
+        long[] w = rateWindows.compute(slug, (k, old) ->
+                (old == null || old[0] != window) ? new long[]{window, 1} : new long[]{window, old[1] + 1});
+        return w[1] <= limit;
+    }
+
+    /** 轮换 key：重新生成 + 状态复活 ACTIVE；keyTtlHours 可空=沿用原过期时刻 */
+    public ServiceDefinition rotateKey(String slug, Long keyTtlHours) {
+        ServiceDefinition def = requirePublished(slug);
+        Instant expiresAt = def.keyPolicy() == null ? null : def.keyPolicy().expiresAt();
+        if (keyTtlHours != null) {
+            expiresAt = ttlToExpiry(keyTtlHours);
+        }
+        return rewritePolicy(def, generateApiKey(),
+                ServiceDefinition.KeyPolicy.STATUS_ACTIVE, expiresAt);
+    }
+
+    /** 吊销 key：立即失效（401）；rotate 可复活 */
+    public ServiceDefinition revokeKey(String slug) {
+        ServiceDefinition def = requirePublished(slug);
+        Instant expiresAt = def.keyPolicy() == null ? null : def.keyPolicy().expiresAt();
+        return rewritePolicy(def, def.apiKey(),
+                ServiceDefinition.KeyPolicy.STATUS_REVOKED, expiresAt);
+    }
+
+    private ServiceDefinition rewritePolicy(ServiceDefinition def, String apiKey,
+            String status, Instant expiresAt) {
+        int rateLimitPerMin = def.keyPolicy() == null
+                ? DEFAULT_RATE_LIMIT_PER_MIN : def.keyPolicy().rateLimitPerMin();
+        ServiceDefinition updated = new ServiceDefinition(def.slug(), def.name(), def.description(),
+                def.type(), def.method(), def.pathTemplate(), def.source(), def.table(),
+                def.allowedColumns(), def.filters(), def.joins(), def.defaultLimit(),
+                apiKey, new ServiceDefinition.KeyPolicy(status, expiresAt, rateLimitPerMin),
+                def.createdAt());
+        published.put(def.slug(), updated);
+        store.save(updated);
+        log.info("key 策略更新: {} -> {} (expiresAt={}, 限流 {}/min)",
+                def.slug(), status, expiresAt, rateLimitPerMin);
+        return updated;
+    }
+
+    private ServiceDefinition requirePublished(String slug) {
+        ServiceDefinition def = published.get(slug);
+        if (def == null) {
+            throw new ServiceNotFoundException(slug);
+        }
+        return def;
+    }
+
+    /**
+     * 服务级 key 校验（恒时比较）：仅对【自助发布、key 策略可用（未吊销未过期）】的 slug 有效。
      * 供 SecurityConfig 双通道使用 —— 服务 key 只能敲自己 slug 的 /query。
      */
     public boolean isValidServiceKey(String slug, String providedKey) {
@@ -281,9 +396,17 @@ public class ServiceRegistry {
             return false;
         }
         ServiceDefinition def = published.get(slug);
-        return def != null && def.apiKey() != null
+        boolean keyMatches = def != null && def.apiKey() != null
                 && MessageDigest.isEqual(def.apiKey().getBytes(java.nio.charset.StandardCharsets.UTF_8),
                         providedKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        if (!keyMatches) {
+            return false;
+        }
+        if (def.keyPolicy() == null || !def.keyPolicy().isUsable()) {
+            log.warn("服务 key 被拒绝（吊销/过期）: {}", slug);
+            return false;
+        }
+        return true;
     }
 
     public static int maxLimit() {

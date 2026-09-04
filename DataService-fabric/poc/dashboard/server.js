@@ -21,6 +21,9 @@ import {
   publishService,
   callService,
   unpublishService,
+  rotateServiceKey,
+  revokeServiceKey,
+  fetchServiceUsage,
 } from './lib/data-service-client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -273,6 +276,31 @@ app.delete('/api/w5/services/:slug', async (req, res) => {
   const result = await unpublishService(req.params.slug);
   if (result.error) return res.status(502).json(result);
   res.status(result.http).end();
+});
+
+// ============================================================
+// Week 6-B 路由：key 生命周期（轮换/吊销）+ 用量计量
+// ============================================================
+
+/** POST /api/w5/services/:slug/key/rotate — 轮换服务 key（旧 key 立即失效） */
+app.post('/api/w5/services/:slug/key/rotate', async (req, res) => {
+  const result = await rotateServiceKey(req.params.slug);
+  if (result.error) return res.status(502).json(result);
+  res.status(result.http).json(result.data);
+});
+
+/** POST /api/w5/services/:slug/key/revoke — 吊销服务 key */
+app.post('/api/w5/services/:slug/key/revoke', async (req, res) => {
+  const result = await revokeServiceKey(req.params.slug);
+  if (result.error) return res.status(502).json(result);
+  res.status(result.http).json(result.data);
+});
+
+/** GET /api/w5/services/:slug/usage — 每日用量（总量/今日/近 14 天） */
+app.get('/api/w5/services/:slug/usage', async (req, res) => {
+  const result = await fetchServiceUsage(req.params.slug);
+  if (result.error) return res.status(502).json(result);
+  res.status(result.http).json(result.data);
 });
 
 app.listen(PORT, () => {

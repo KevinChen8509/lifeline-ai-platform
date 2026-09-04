@@ -296,13 +296,17 @@ function renderServices() {
       <label style="font-size:12px;color:var(--text-dim)">${esc(f.column)} (${esc(f.operator)})<input data-svc-param="${esc(f.column)}" style="width:120px;margin-left:6px" placeholder="如 ${esc(defaultHint(s.table, f.column))}"></label>`).join('');
     const joinInfo = s.type === 'fusion' ? s.joins.map((j) => `
         <div>融合从表：<span class="fqn">${esc(j.fqn)}</span> → 嵌套字段 <code>${esc(j.name)}</code>（${j.columns.length} 列 · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主键 ≤${j.limitPerParent}）</div>`).join('') : '';
-    const keyRow = s.apiKey ? `
+    const keyRow = s.keyPolicy ? `
       <div class="wiz-row" style="margin:8px 0 0;min-width:100%">
         <label style="min-width:auto;font-size:12px">服务 API Key</label>
-        <span class="key-chip">${esc(s.apiKey.slice(0, 10))}…${esc(s.apiKey.slice(-4))}</span>
+        <span class="key-chip">${s.apiKey ? `${esc(s.apiKey.slice(0, 10))}…${esc(s.apiKey.slice(-4))}` : '—'}</span>
+        ${keyStatusBadge(s.keyPolicy)}
         <button class="ghost" data-svc-key="${esc(s.slug)}">📋 复制 Key</button>
-        <span style="font-size:12px;color:var(--text-dim)">仅可调本服务 /query（恒时校验），对外开放用</span>
-      </div>` : '';
+        <button class="ghost" data-svc-rotate="${esc(s.slug)}">🔄 轮换</button>
+        <button class="ghost" data-svc-revoke="${esc(s.slug)}" ${s.keyPolicy.status === 'REVOKED' ? 'disabled' : ''}>⛔ 吊销</button>
+        <button class="ghost" data-svc-usage="${esc(s.slug)}">📊 用量</button>
+      </div>
+      <div style="font-size:12px;color:var(--text-dim)">限流 ${s.keyPolicy.rateLimitPerMin}/分 · Key ${s.keyPolicy.expiresAt ? `到期 ${esc(s.keyPolicy.expiresAt.replace('T', ' ').slice(0, 16))} UTC` : '永久有效'} · 仅可调本服务 /query（恒时校验）</div>` : '';
     const typeBadge = s.type === 'fusion' ? '<span class="badge fusion">JOIN</span>' : '';
     return `
     <div class="card" data-slug="${esc(s.slug)}">
@@ -330,10 +334,18 @@ function renderServices() {
         </div>
       </div>
       <div class="result-box" id="svc-result-${esc(s.slug)}" style="display:none"></div>
+      <div class="usage-box" id="svc-usage-${esc(s.slug)}" style="display:none"></div>
     </div>`;
   }).join('');
 
   bindPublishedActions();
+}
+
+/** W6-B：key 状态徽章（吊销/过期/有效） */
+function keyStatusBadge(policy) {
+  if (policy.status === 'REVOKED') return '<span class="badge key-revoked">⛔ 已吊销</span>';
+  if (policy.expiresAt && new Date(policy.expiresAt) < new Date()) return '<span class="badge key-revoked">⏰ 已过期</span>';
+  return '<span class="badge key-active">● Key 有效</span>';
 }
 
 function defaultHint(table, column) {
@@ -361,6 +373,7 @@ function bindPublishedActions() {
       const started = Date.now();
       const res = await fetch(`/api/w5/services/${encodeURIComponent(slug)}/query?${qs}`);
       const data = await res.json();
+      if (res.status === 429) toast('⛔ 触发限流：每分钟调用上限已达，请约 60s 后重试', false);
       showResult(box, { ok: res.ok, http: res.status, data }, started);
       loadServices();
     };
@@ -395,6 +408,54 @@ function bindPublishedActions() {
       const res = await fetch(`/api/w5/services/${encodeURIComponent(slug)}`, { method: 'DELETE' });
       if (res.status === 204) { toast(`服务 ${slug} 已下线`); loadServices(); }
       else toast(`下线失败 HTTP ${res.status}`, false);
+    };
+  });
+  // ============ W6-B：key 生命周期 + 用量 ============
+  document.querySelectorAll('[data-svc-rotate]').forEach((btn) => {
+    btn.onclick = async () => {
+      const slug = btn.dataset.svcRotate;
+      if (!window.confirm(`确认轮换「${slug}」的服务 Key？旧 Key 立即失效（已分发的调用方将 401）。`)) return;
+      const res = await fetch(`/api/w5/services/${encodeURIComponent(slug)}/key/rotate`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      const newKey = data?.service?.apiKey;
+      if (res.ok && newKey) {
+        try {
+          await navigator.clipboard.writeText(newKey);
+          toast(`已轮换 —— 新 Key 已复制到剪贴板（${newKey.slice(0, 10)}…${newKey.slice(-4)}），旧 Key 已失效`);
+        } catch {
+          toast(`已轮换 —— 新 Key：${newKey}（请手动保存），旧 Key 已失效`);
+        }
+        loadServices();
+      } else {
+        toast(`轮换失败：${data?.message ?? `HTTP ${res.status}`}`, false);
+      }
+    };
+  });
+  document.querySelectorAll('[data-svc-revoke]').forEach((btn) => {
+    btn.onclick = async () => {
+      const slug = btn.dataset.svcRevoke;
+      if (!window.confirm(`确认吊销「${slug}」的服务 Key？第三方调用立即 401（服务本身不下线，轮换可复活）。`)) return;
+      const res = await fetch(`/api/w5/services/${encodeURIComponent(slug)}/key/revoke`, { method: 'POST' });
+      if (res.ok) { toast(`「${slug}」Key 已吊销 —— 第三方调用立即 401`); loadServices(); }
+      else toast(`吊销失败 HTTP ${res.status}`, false);
+    };
+  });
+  document.querySelectorAll('[data-svc-usage]').forEach((btn) => {
+    btn.onclick = async () => {
+      const slug = btn.dataset.svcUsage;
+      const box = $(`#svc-usage-${slug}`);
+      if (box.style.display === 'block') { box.style.display = 'none'; return; }
+      box.style.display = 'block';
+      box.innerHTML = '<span class="stat-line">加载用量中…</span>';
+      const res = await fetch(`/api/w5/services/${encodeURIComponent(slug)}/usage`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { box.innerHTML = `<span class="err">用量查询失败 HTTP ${res.status}</span>`; return; }
+      const max = Math.max(1, ...(data.recentDays || []).map((d) => d.calls));
+      const days = (data.recentDays || []).map((d) =>
+        `<div>${esc(d.day)} <b style="color:var(--blue)">${d.calls}</b><span class="usage-bar" style="width:${Math.round(d.calls / max * 120)}px"></span></div>`).join('');
+      box.innerHTML = `
+        <div>累计调用 <b style="color:var(--blue)">${data.totalCalls ?? 0}</b> 次 · 今日 <b style="color:var(--green)">${data.todayCalls ?? 0}</b> 次（按日计量，近 14 天）</div>
+        ${days || '<div style="color:var(--text-dim)">（尚无调用记录）</div>'}`;
     };
   });
 }
@@ -506,6 +567,10 @@ async function publishFromWizard() {
     joins = [{ fqn: joinFqn, name: joinName, columns: joinColumns, joinColumn: joinCol, parentColumn: parentCol, limitPerParent: perParent }];
   }
 
+  // W6-B：可选限流（次/分）与 Key 有效期（小时）—— 留空走服务端默认（60/永久）
+  const rateLimit = +$('#wiz-rate').value;
+  const ttlHours = +$('#wiz-ttl').value;
+
   state.wiz.busy = true;
   status.textContent = '发布中…';
   const res = await fetch('/api/w5/services', {
@@ -517,6 +582,8 @@ async function publishFromWizard() {
       filters: state.wiz.filters.map((f) => ({ column: f.column, operator: f.op })),
       joins,
       defaultLimit: +$('#wiz-limit').value || 20,
+      ...(rateLimit > 0 ? { rateLimitPerMin: rateLimit } : {}),
+      ...(ttlHours > 0 ? { keyTtlHours: ttlHours } : {}),
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -569,7 +636,7 @@ function renderVerifyContract() {
   if (!s) { box.innerHTML = ''; return; }
   const joinInfo = s.type === 'fusion' ? s.joins.map((j) => `
     <div>融合从表 <code>${esc(j.name)}</code>：<span class="fqn">${esc(j.fqn)}</span> · 列 [${j.columns.map(esc).join(', ')}] · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主键 ≤${j.limitPerParent}</div>`).join('') : '';
-  const keyRow = s.apiKey ? `<div>服务 Key：<span class="key-chip">${esc(s.apiKey.slice(0, 10))}…${esc(s.apiKey.slice(-4))}</span>（仅本服务 /query 有效 —— 对外分发）</div>` : '';
+  const keyRow = s.apiKey ? `<div>服务 Key：<span class="key-chip">${esc(s.apiKey.slice(0, 10))}…${esc(s.apiKey.slice(-4))}</span>${keyStatusBadge(s.keyPolicy)}（仅本服务 /query 有效 —— 对外分发）</div>` : '';
   box.innerHTML = `
     <div class="card" style="margin-bottom:14px">
       <h3><span class="badge published">契约快照</span>${s.type === 'fusion' ? '<span class="badge fusion">JOIN</span>' : ''}${esc(s.slug)}</h3>

@@ -103,15 +103,19 @@
     .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
     .callcount { font-size: 12px; color: var(--text-dim); margin-left: auto; }
     .badge.fusion { color: #f472b6; border-color: #f472b6; }
+    .badge.key-active { color: var(--green); border-color: var(--green); }
+    .badge.key-revoked { color: var(--red); border-color: var(--red); }
     .join-block { border: 1px dashed var(--border); border-radius: 8px; padding: 12px 14px; margin: 6px 0 12px; background: #172036; }
     .key-chip { font-family: Consolas, monospace; font-size: 12px; color: var(--green); background: #0d2b21; border: 1px solid var(--green); border-radius: 6px; padding: 3px 10px; word-break: break-all; }
+    .usage-box { background: #0b1120; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; font-size: 12px; margin-top: 8px; }
+    .usage-bar { display: inline-block; height: 8px; background: var(--green); border-radius: 2px; vertical-align: middle; margin-left: 6px; }
   </style>
 </head>
 <body>
   <header class="page-header">
     <div>
       <h1>Week 5/6 · 数据服务市场</h1>
-      <div class="sub">数据资源目录 · 业务场景 · 自助发布参数化 API · 跨表融合定制接口 · 契约验证与服务级 Key 对外开放</div>
+      <div class="sub">数据资源目录 · 业务场景 · 自助发布参数化 API · 跨表融合定制接口 · 契约验证与服务级 Key 对外开放 · 注册表持久化 / Key 生命周期 / 限流计量（W6-B）</div>
     </div>
     <div class="links">
       <a href="/index.html">Week 1-2</a>
@@ -226,6 +230,13 @@
           </div>
         </div>
         <div class="wiz-row">
+          <label>限流（次/分）</label>
+          <input id="wiz-rate" type="number" placeholder="60" min="1" max="600" style="width:80px" />
+          <label>Key 有效期(时)</label>
+          <input id="wiz-ttl" type="number" placeholder="留空=永久" min="1" style="width:110px" />
+          <span style="font-size:12px;color:var(--text-dim)">W6-B：超限 429；Key 到期/吊销即失效（可轮换复活）· 注册表已持久化（重启不丢）</span>
+        </div>
+        <div class="wiz-row">
           <button class="primary" id="wiz-publish">🚀 发布服务</button>
           <span id="wiz-status" style="font-size:12px"></span>
         </div>
@@ -243,7 +254,7 @@
     <section class="tab-panel" id="panel-verify">
       <div class="wizard">
         <h3>🧪 服务验证台</h3>
-        <div class="hint">发布 ≠ 交付 —— 单表服务跑 V1-V5（正常调用 · 注入防御 · 未知参数拒绝 · LIMIT 钳制 · 发布白名单闸），融合服务跑 FV1-FV7（另含关联一致性自检 + 金标用例）。全部通过即可放心交付消费方（与 mvn 112/112 测试同一防线）</div>
+        <div class="hint">发布 ≠ 交付 —— 单表服务跑 V1-V5（正常调用 · 注入防御 · 未知参数拒绝 · LIMIT 钳制 · 发布白名单闸），融合服务跑 FV1-FV7（另含关联一致性自检 + 金标用例）。全部通过即可放心交付消费方（与 mvn 129/129 测试同一防线）。注意：服务限流过低会导致套件连跑触发 429</div>
         <div class="wiz-row">
           <label>验证对象</label>
           <select id="verify-slug" style="min-width:340px"></select>

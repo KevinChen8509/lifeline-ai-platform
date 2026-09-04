@@ -100,11 +100,11 @@
             <groupId>com.zaxxer</groupId>
             <artifactId>HikariCP</artifactId>
         </dependency>
-        <!-- F4 红队注入对比测试：H2 MySQL 兼容模式替身（无需起真源 DB） -->
+        <!-- W6-B 注册表持久化文件库 + F4 红队注入对比测试：H2 MySQL 兼容模式（无需起真源 DB） -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>test</scope>
+            <scope>runtime</scope>
         </dependency>
 
         <dependency>

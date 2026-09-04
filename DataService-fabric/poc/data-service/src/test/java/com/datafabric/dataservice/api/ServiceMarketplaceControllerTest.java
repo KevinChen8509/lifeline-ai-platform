@@ -26,6 +26,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -44,6 +45,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "datafabric.raw-db.mysql-user=sa",
         "datafabric.raw-db.mysql-password=",
         "datafabric.security.api-key=test-api-key-fixed-for-ci",
+        // W6-B：注册表持久化库指向 mem（避免测试写文件库；DB_CLOSE_DELAY 使跨用例状态与内存 Map 语义一致）
+        "datafabric.registry-db.url=jdbc:h2:mem:w6bmarketreg;MODE=MySQL;DB_CLOSE_DELAY=-1",
+        "datafabric.registry-db.user=sa",
+        "datafabric.registry-db.password=",
 })
 class ServiceMarketplaceControllerTest {
 
@@ -378,5 +383,152 @@ class ServiceMarketplaceControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1))
                 .andExpect(jsonPath("$.rows[0].orders.length()").value(1));
+    }
+
+    // ============ W6-B 运营化：key 生命周期 / 限流 / 计量 / 策略透出 ============
+
+    /** 带 W6-B 策略字段的融合发布体 */
+    private String fusionBodyWithPolicy(String slug, int rateLimitPerMin, Integer ttlHours) {
+        String base = """
+                {
+                  "slug": "%s",
+                  "name": "客户订单融合",
+                  "description": "W6-B 策略",
+                  "fqn": "mysql.customer_db.customer",
+                  "allowedColumns": ["cust_id", "cust_name", "cust_level"],
+                  "filters": [{"column": "cust_id", "operator": "eq"}],
+                  "joins": [{
+                    "fqn": "mysql.customer_db.orders",
+                    "name": "orders",
+                    "columns": ["order_id", "order_amount"],
+                    "joinColumn": "cust_id",
+                    "parentColumn": "cust_id",
+                    "limitPerParent": 50
+                  }],
+                  "defaultLimit": 10,
+                  "rateLimitPerMin": %d%s
+                }""".formatted(slug, rateLimitPerMin,
+                ttlHours == null ? "" : ",\n  \"keyTtlHours\": " + ttlHours);
+        return base;
+    }
+
+    @Test
+    @DisplayName("发布策略透出：rateLimitPerMin=5 + keyTtlHours=24 → 201 响应含 keyPolicy")
+    void publish_withPolicy_policyEchoed() throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(fusionBodyWithPolicy("policy-echo", 5, 24)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.service.keyPolicy.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.service.keyPolicy.rateLimitPerMin").value(5))
+                .andExpect(jsonPath("$.service.keyPolicy.expiresAt").isNotEmpty());
+    }
+
+    @Test
+    @DisplayName("轮换 E2E：rotate 后旧 key 401 / 新 key 200；服务 key 自调 rotate → 401")
+    void keyRotate_oldKeyDiesNewKeyWorks() throws Exception {
+        String oldKey = publishFusion("rotate-e2e", 50);
+
+        MvcResult rotateResult = mockMvc.perform(post("/api/v1/services/rotate-e2e/key/rotate")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.service.apiKey").isNotEmpty())
+                .andReturn();
+        String newKey = MAPPER.readTree(rotateResult.getResponse().getContentAsString())
+                .path("service").path("apiKey").asText();
+        assertThat(newKey).isNotEqualTo(oldKey);
+
+        mockMvc.perform(get("/api/v1/services/rotate-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, oldKey))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(get("/api/v1/services/rotate-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, newKey))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].cust_name").value("张伟"));
+
+        // 服务 key 不能自我管理（仅全局 key 有 rotate 权限）
+        mockMvc.perform(post("/api/v1/services/rotate-e2e/key/rotate")
+                        .header(SecurityConfig.HEADER_API_KEY, newKey))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("吊销 E2E：revoke 后服务 key 401；全局 key 试调照常 200（服务未下线）")
+    void keyRevoked_serviceKey401GlobalStillWorks() throws Exception {
+        String serviceKey = publishFusion("revoke-e2e", 50);
+
+        mockMvc.perform(post("/api/v1/services/revoke-e2e/key/revoke")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.service.keyPolicy.status").value("REVOKED"));
+
+        mockMvc.perform(get("/api/v1/services/revoke-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, serviceKey))
+                .andExpect(status().isUnauthorized());
+
+        mockMvc.perform(get("/api/v1/services/revoke-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].cust_name").value("张伟"));
+    }
+
+    @Test
+    @DisplayName("限流 E2E：rateLimitPerMin=2 → 第 3 次 429 + Retry-After: 60")
+    void rateLimit_thirdCallInMinute429() throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(fusionBodyWithPolicy("rate-limit-e2e", 2, null)))
+                .andExpect(status().isCreated());
+
+        for (int i = 1; i <= 2; i++) {
+            mockMvc.perform(get("/api/v1/services/rate-limit-e2e/query")
+                            .param("cust_id", "C0001")
+                            .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                    .andExpect(status().isOk());
+        }
+
+        mockMvc.perform(get("/api/v1/services/rate-limit-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", "60"))
+                .andExpect(jsonPath("$.error").value("RATE_LIMITED"));
+    }
+
+    @Test
+    @DisplayName("计量 E2E：查询 2 次 → usage 总量=今日=2；未知 slug → 404；builtin rotate → 404")
+    void usage_countsQueriesAnd404s() throws Exception {
+        publishFusion("usage-e2e", 50);
+
+        mockMvc.perform(get("/api/v1/services/usage-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/services/usage-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/v1/services/usage-e2e/usage")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalCalls").value(2))
+                .andExpect(jsonPath("$.todayCalls").value(2))
+                .andExpect(jsonPath("$.recentDays[0].calls").value(2));
+
+        mockMvc.perform(get("/api/v1/services/no-such-slug/usage")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isNotFound());
+
+        mockMvc.perform(post("/api/v1/services/customer-profile/key/rotate")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isNotFound());
     }
 }

@@ -18,6 +18,8 @@ import java.util.List;
  * 值一律 PreparedStatement 绑定。parentColumn 须 ∈ 主表 allowedColumns。
  *
  * 对外开放：自助发布服务携带服务级 apiKey（仅可调用自身 /query，见 SecurityConfig 双通道）。
+ * W6-B 运营化：apiKey 附带 KeyPolicy（状态/过期/限流）——吊销或过期的 key 即刻失效，
+ * 每服务每分钟调用上限，注册表持久化到平台 H2 文件库（重启 Key 不变）。
  */
 public record ServiceDefinition(
         String slug,
@@ -33,11 +35,25 @@ public record ServiceDefinition(
         List<JoinSpec> joins,
         int defaultLimit,
         String apiKey,
+        KeyPolicy keyPolicy,
         Instant createdAt) {
 
     public static final String TYPE_BUILTIN = "builtin";
     public static final String TYPE_TABLE_QUERY = "table-query";
     public static final String TYPE_FUSION = "fusion";
+
+    /** key 生命周期策略（builtin 无 key → keyPolicy 为 null） */
+    public record KeyPolicy(String status, Instant expiresAt, int rateLimitPerMin) {
+
+        public static final String STATUS_ACTIVE = "ACTIVE";
+        public static final String STATUS_REVOKED = "REVOKED";
+
+        /** 吊销或已过期 → key 不可用 */
+        public boolean isUsable() {
+            return STATUS_ACTIVE.equals(status)
+                    && (expiresAt == null || Instant.now().isBefore(expiresAt));
+        }
+    }
 
     /** 可配置过滤参数：列 × 操作符（eq/like/gte/lte），作用于主表 */
     public record FilterSpec(String column, String operator) {}

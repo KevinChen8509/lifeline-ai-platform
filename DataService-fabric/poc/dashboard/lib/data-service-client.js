@@ -334,3 +334,49 @@ export async function unpublishService(slug) {
     return { ok: false, http: 0, error: err.message };
   }
 }
+
+// ============================================================
+// Week 6-B：服务运营化（key 生命周期 + 用量计量）
+// ============================================================
+
+/** POST /api/v1/services/{slug}/key/rotate — 轮换服务 key（旧 key 立即失效） */
+export async function rotateServiceKey(slug) {
+  try {
+    const res = await fetch(
+      `${DATA_SERVICE_URL}/api/v1/services/${encodeURIComponent(slug)}/key/rotate`,
+      { method: 'POST', headers: authHeaders(), signal: AbortSignal.timeout(8000) },
+    );
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, http: res.status, data };
+  } catch (err) {
+    return { ok: false, http: 0, error: err.message };
+  }
+}
+
+/** POST /api/v1/services/{slug}/key/revoke — 吊销服务 key（立即 401） */
+export async function revokeServiceKey(slug) {
+  try {
+    const res = await fetch(
+      `${DATA_SERVICE_URL}/api/v1/services/${encodeURIComponent(slug)}/key/revoke`,
+      { method: 'POST', headers: authHeaders(), signal: AbortSignal.timeout(8000) },
+    );
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, http: res.status, data };
+  } catch (err) {
+    return { ok: false, http: 0, error: err.message };
+  }
+}
+
+/** GET /api/v1/services/{slug}/usage — 每日用量（总量/今日/近 14 天） */
+export async function fetchServiceUsage(slug) {
+  try {
+    const res = await fetch(
+      `${DATA_SERVICE_URL}/api/v1/services/${encodeURIComponent(slug)}/usage`,
+      { headers: authHeaders(), signal: AbortSignal.timeout(8000) },
+    );
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, http: res.status, data };
+  } catch (err) {
+    return { ok: false, http: 0, error: err.message };
+  }
+}
