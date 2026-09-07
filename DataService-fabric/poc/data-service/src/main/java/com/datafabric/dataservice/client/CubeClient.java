@@ -72,6 +72,7 @@ public class CubeClient {
         return rows;
     }
 
+    /** */
     private static Object unwrap(JsonNode node) {
         if (node == null || node.isNull()) return null;
         if (node.isInt() || node.isLong()) return node.longValue();

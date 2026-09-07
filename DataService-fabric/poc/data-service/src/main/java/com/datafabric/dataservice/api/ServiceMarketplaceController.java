@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
  * W5/W6 服务市场：
  *   - 目录：GET /api/v1/services（builtin + 自助发布）
  *   - 自助发布：POST /api/v1/services（校验见 ServiceRegistry；融合声明见 joins）
- *   - 试调：GET /api/v1/services/{slug}/query（table-query / fusion）
+ *   - 试调：GET /api/v1/services/{slug}/query（table-query / fusion / aggregate）
  *   - 下线：DELETE /api/v1/services/{slug}
  *   - W6-B 运营：POST /{slug}/key/rotate · POST /{slug}/key/revoke · GET /{slug}/usage
  *
@@ -152,10 +152,20 @@ public class ServiceMarketplaceController {
         List<ServiceDefinition.FilterSpec> applied = resolveFilters(def, params);
 
         long start = System.currentTimeMillis();
-        List<Map<String, String>> mainRows = execute(def, applied, params, limit);
+        List<Map<String, String>> mainRows = ServiceDefinition.TYPE_AGGREGATE.equals(def.type())
+                ? executeAggregate(def, applied, params, limit)
+                : execute(def, applied, params, limit);
         long elapsed = System.currentTimeMillis() - start;
 
         registry.recordCall(slug);
+        if (ServiceDefinition.TYPE_AGGREGATE.equals(def.type())) {
+            // 聚合响应复用 QueryResponse：columns = 分组维度 + 聚合别名
+            List<String> outCols = new ArrayList<>(def.allowedColumns());
+            def.aggregates().forEach(a -> outCols.add(a.alias()));
+            serviceCallLog.info("{\"slug\":\"{}\",\"type\":\"aggregate\",\"source\":\"{}\",\"table\":\"{}\",\"filters\":{},\"rows\":{},\"aggregates\":{},\"limit\":{},\"elapsedMs\":{}}",
+                    slug, def.source(), def.table(), params.size(), mainRows.size(), def.aggregates().size(), limit, elapsed);
+            return new QueryResponse(slug, outCols, mainRows, mainRows.size(), elapsed);
+        }
         if (ServiceDefinition.TYPE_FUSION.equals(def.type())) {
             List<Map<String, Object>> rows = new ArrayList<>(mainRows.size());
             for (Map<String, String> r : mainRows) {
@@ -325,6 +335,75 @@ public class ServiceMarketplaceController {
             }
         } catch (SQLException e) {
             log.error("服务查询失败 slug={} source={}: {}", def.slug(), def.source(), e.getMessage());
+            throw new SourceUnavailableException(def.source(), e);
+        }
+        return rows;
+    }
+
+    /**
+     * 聚合执行（W6-C）：单条 GROUP BY SQL —— 维度 = allowedColumns，聚合表达式来自
+     * 发布期白名单校验后的 AggSpec；值全 PreparedStatement 绑定，标识符执行期二次复检。
+     * 输出行 = 维度列 + 聚合别名（数值经 rs.getString 可读）。ORDER BY 1 稳定输出次序。
+     */
+    private List<Map<String, String>> executeAggregate(
+            ServiceDefinition def, List<ServiceDefinition.FilterSpec> applied,
+            Map<String, String> params, int limit) {
+        // 第二道闸：维度/表/聚合列/别名执行期复检
+        for (String col : def.allowedColumns()) {
+            checkIdentifier(col);
+        }
+        checkIdentifier(def.table());
+        for (ServiceDefinition.AggSpec agg : def.aggregates()) {
+            checkIdentifier(agg.function());
+            checkIdentifier(agg.alias());
+            if (!agg.isStar()) {
+                checkIdentifier(agg.column());
+            }
+        }
+
+        StringBuilder sql = new StringBuilder("SELECT ");
+        sql.append(def.allowedColumns().stream()
+                .map(c -> "`" + c + "`")
+                .reduce((a, b) -> a + ", " + b).orElseThrow());
+        for (ServiceDefinition.AggSpec agg : def.aggregates()) {
+            sql.append(", ").append(agg.sqlExpr()).append(" AS `").append(agg.alias()).append("`");
+        }
+        sql.append(" FROM `").append(def.table()).append("`");
+        List<String> values = new ArrayList<>();
+        boolean firstFilter = true;
+        for (ServiceDefinition.FilterSpec f : applied) {
+            sql.append(firstFilter ? " WHERE " : " AND ").append("`")
+                    .append(f.column()).append("` ")
+                    .append(operatorSql(f.operator())).append(" ?");
+            firstFilter = false;
+            String value = params.get(f.column());
+            values.add("like".equals(f.operator()) ? "%" + value + "%" : value);
+        }
+        sql.append(" GROUP BY ").append(def.allowedColumns().stream()
+                .map(c -> "`" + c + "`")
+                .reduce((a, b) -> a + ", " + b).orElseThrow());
+        sql.append(" ORDER BY 1 LIMIT ").append(limit);
+
+        HikariDataSource pool = pools.get(def.source());
+        List<Map<String, String>> rows = new ArrayList<>();
+        try (Connection conn = pool.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+            for (int i = 0; i < values.size(); i++) {
+                ps.setString(i + 1, values.get(i));
+            }
+            List<String> outCols = new ArrayList<>(def.allowedColumns());
+            def.aggregates().forEach(a -> outCols.add(a.alias()));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Map<String, String> row = new LinkedHashMap<>();
+                    for (String col : outCols) {
+                        row.put(col, rs.getString(col));
+                    }
+                    rows.add(row);
+                }
+            }
+        } catch (SQLException e) {
+            log.error("聚合服务查询失败 slug={} source={}: {}", def.slug(), def.source(), e.getMessage());
             throw new SourceUnavailableException(def.source(), e);
         }
         return rows;

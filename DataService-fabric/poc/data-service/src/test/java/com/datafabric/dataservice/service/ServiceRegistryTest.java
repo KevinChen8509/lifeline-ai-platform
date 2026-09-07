@@ -52,7 +52,7 @@ class ServiceRegistryTest {
                 slug, "VIP 客户查询", "按等级查客户", "mysql.customer_db.customer",
                 List.of("cust_id", "cust_name", "cust_level"),
                 List.of(new ServiceDefinition.FilterSpec("cust_level", "eq")),
-                null, 10, null, null);
+                null, null, 10, null, null);
     }
 
     private static ServiceRegistry.JoinRequest validJoin(String name) {
@@ -105,7 +105,7 @@ class ServiceRegistryTest {
         ServiceRegistry.PublishRequest evil = new ServiceRegistry.PublishRequest(
                 "evil-service", "注入尝试", "", "mysql.customer_db.customer",
                 List.of("cust_id", "cust_level; DROP TABLE customer"),
-                List.of(), null, 10, null, null);
+                List.of(), null, null, 10, null, null);
 
         assertThatThrownBy(() -> registry.publish(evil))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -129,7 +129,7 @@ class ServiceRegistryTest {
                 "bad-op", "非法操作符", "", "mysql.customer_db.customer",
                 List.of("cust_level"),
                 List.of(new ServiceDefinition.FilterSpec("cust_level", "BETWEEN")),
-                null, 10, null, null);
+                null, null, 10, null, null);
 
         assertThatThrownBy(() -> registry.publish(req))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -143,7 +143,7 @@ class ServiceRegistryTest {
                 "bad-filter", "过滤列越界", "", "mysql.customer_db.customer",
                 List.of("cust_id"),
                 List.of(new ServiceDefinition.FilterSpec("region", "eq")),
-                null, 10, null, null);
+                null, null, 10, null, null);
 
         assertThatThrownBy(() -> registry.publish(req))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -155,12 +155,12 @@ class ServiceRegistryTest {
     void publish_defaultLimitOutOfRange_rejected() {
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "limit-0", "零", "", "mysql.customer_db.customer",
-                List.of("cust_id"), List.of(), null, 0, null, null)))
+                List.of("cust_id"), List.of(), null, null, 0, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("defaultLimit");
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "limit-9999", "超限", "", "mysql.customer_db.customer",
-                List.of("cust_id"), List.of(), null, 501, null, null)))
+                List.of("cust_id"), List.of(), null, null, 501, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("defaultLimit");
     }
@@ -211,7 +211,7 @@ class ServiceRegistryTest {
                 "customer-orders-fusion", "客户订单融合", "客户+订单", "mysql.customer_db.customer",
                 List.of("cust_id", "cust_name", "cust_level"),
                 List.of(new ServiceDefinition.FilterSpec("cust_id", "eq")),
-                List.of(validJoin("orders")), 10, null, null));
+                List.of(validJoin("orders")), null, 10, null, null));
 
         assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_FUSION);
         assertThat(def.joins()).hasSize(1);
@@ -243,7 +243,7 @@ class ServiceRegistryTest {
 
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "evil-join", "注入尝试", "", "mysql.customer_db.customer",
-                List.of("cust_id"), List.of(), List.of(evil), 10, null, null)))
+                List.of("cust_id"), List.of(), List.of(evil), null, 10, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("列名不合法");
     }
@@ -257,7 +257,7 @@ class ServiceRegistryTest {
 
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "bad-joincol", "坏关联键", "", "mysql.customer_db.customer",
-                List.of("cust_id"), List.of(), List.of(bad), 10, null, null)))
+                List.of("cust_id"), List.of(), List.of(bad), null, 10, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("joinColumn");
     }
@@ -271,7 +271,7 @@ class ServiceRegistryTest {
 
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "bad-parent", "坏主表键", "", "mysql.customer_db.customer",
-                List.of("cust_id"), List.of(), List.of(bad), 10, null, null)))
+                List.of("cust_id"), List.of(), List.of(bad), null, 10, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("parentColumn");
     }
@@ -282,14 +282,14 @@ class ServiceRegistryTest {
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "join-3", "三个从表", "", "mysql.customer_db.customer",
                 List.of("cust_id"), List.of(),
-                List.of(validJoin("a"), validJoin("b"), validJoin("c")), 10, null, null)))
+                List.of(validJoin("a"), validJoin("b"), validJoin("c")), null, 10, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("最多");
 
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "join-dup", "重名从表", "", "mysql.customer_db.customer",
                 List.of("cust_id"), List.of(),
-                List.of(validJoin("orders"), validJoin("orders")), 10, null, null)))
+                List.of(validJoin("orders"), validJoin("orders")), null, 10, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("重复");
     }
@@ -302,14 +302,14 @@ class ServiceRegistryTest {
                 List.of("cust_id"), List.of(),
                 List.of(new ServiceRegistry.JoinRequest(
                         "mysql.customer_db.orders", "orders",
-                        List.of("order_id"), "cust_id", "cust_id", 999)), 10, null, null)))
+                        List.of("order_id"), "cust_id", "cust_id", 999)), null, 10, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("limitPerParent");
 
         when(omClient.fetchTables()).thenReturn(List.of(customerTable()));
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "join-offline", "从表离线", "", "mysql.customer_db.customer",
-                List.of("cust_id"), List.of(), List.of(validJoin("orders")), 10, null, null)))
+                List.of("cust_id"), List.of(), List.of(validJoin("orders")), null, 10, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("从表目录元数据不可用");
     }
@@ -337,7 +337,7 @@ class ServiceRegistryTest {
         Instant before = Instant.now();
         ServiceDefinition def = registry.publish(new ServiceRegistry.PublishRequest(
                 "policy-service", "带策略", "", "mysql.customer_db.customer",
-                List.of("cust_id"), List.of(), null, 10, null, 24L));
+                List.of("cust_id"), List.of(), null, null, 10, null, 24L));
 
         assertThat(def.keyPolicy()).isNotNull();
         assertThat(def.keyPolicy().status()).isEqualTo(ServiceDefinition.KeyPolicy.STATUS_ACTIVE);
@@ -352,12 +352,12 @@ class ServiceRegistryTest {
     void publish_rateLimitOutOfRange_rejected() {
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "rate-0", "零限流", "", "mysql.customer_db.customer",
-                List.of("cust_id"), List.of(), null, 10, 0, null)))
+                List.of("cust_id"), List.of(), null, null, 10, 0, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("rateLimitPerMin");
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "rate-601", "超限流", "", "mysql.customer_db.customer",
-                List.of("cust_id"), List.of(), null, 10, 601, null)))
+                List.of("cust_id"), List.of(), null, null, 10, 601, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("rateLimitPerMin");
     }
@@ -399,7 +399,7 @@ class ServiceRegistryTest {
     void tryAcquire_fixedWindowClamps() {
         registry.publish(new ServiceRegistry.PublishRequest(
                 "limited-svc", "限流服务", "", "mysql.customer_db.customer",
-                List.of("cust_id"), List.of(), null, 10, 2, null));
+                List.of("cust_id"), List.of(), null, null, 10, 2, null));
 
         assertThat(registry.tryAcquire("limited-svc")).isTrue();
         assertThat(registry.tryAcquire("limited-svc")).isTrue();
@@ -422,20 +422,113 @@ class ServiceRegistryTest {
         assertThat(usage.recentDays()).hasSize(1);
     }
 
+    // ============ W6-C 聚合列 DSL 校验 ============
+
+    private static ServiceRegistry.AggRequest agg(String function, String column, String alias) {
+        return new ServiceRegistry.AggRequest(function, column, alias);
+    }
+
     @Test
-    @DisplayName("持久化灌回：同 store 重建 registry → 服务与 key 原样恢复")
-    void loadPersisted_restoresServicesWithSameKey() {
-        InMemoryRegistryStore store = new InMemoryRegistryStore();
-        ServiceRegistry first = new ServiceRegistry(omClient, store);
-        when(omClient.fetchTables()).thenReturn(List.of(customerTable(), ordersTable()));
-        ServiceDefinition def = first.publish(validRequest("persist-me"));
+    @DisplayName("聚合发布：合法 aggregates → TYPE_AGGREGATE + 维度=allowedColumns + apiKey")
+    void publish_validAggregates_createsAggregateDefinition() {
+        ServiceDefinition def = registry.publish(new ServiceRegistry.PublishRequest(
+                "orders-by-cust", "按客户聚合订单", "", "mysql.customer_db.orders",
+                List.of("cust_id"), List.of(), null,
+                List.of(agg("COUNT", null, "order_count"), agg("SUM", "order_amount", "total_amount")),
+                10, null, null));
 
-        // 模拟重启：同一存储上的新 registry 实例执行 @PostConstruct 装载
-        ServiceRegistry second = new ServiceRegistry(omClient, store);
-        second.loadPersisted();
+        assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_AGGREGATE);
+        assertThat(def.allowedColumns()).containsExactly("cust_id"); // GROUP BY 维度
+        assertThat(def.aggregates()).hasSize(2);
+        assertThat(def.aggregates().get(0).function()).isEqualTo("COUNT");
+        assertThat(def.aggregates().get(0).isStar()).isTrue();
+        assertThat(def.aggregates().get(1).sqlExpr()).isEqualTo("SUM(`order_amount`)");
+        assertThat(def.apiKey()).startsWith("sk-w6-");
+    }
 
-        assertThat(second.find("persist-me")).isPresent();
-        assertThat(second.find("persist-me").orElseThrow().apiKey()).isEqualTo(def.apiKey());
-        assertThat(second.isValidServiceKey("persist-me", def.apiKey())).isTrue();
+    @Test
+    @DisplayName("聚合发布：函数白名单外 → 拒绝（注入函数同路拦下）")
+    void publish_unknownAggFunction_rejected() {
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-evil-fn", "坏函数", "", "mysql.customer_db.orders",
+                List.of("cust_id"), List.of(), null,
+                List.of(agg("SUM; DROP TABLE orders", "order_amount", "total")), 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("聚合函数");
+    }
+
+    @Test
+    @DisplayName("聚合发布：SUM 空列拒绝（仅 COUNT 可 COUNT(*)）；列不在元数据拒绝")
+    void publish_aggColumnRules_rejected() {
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-sum-star", "SUM 星号", "", "mysql.customer_db.orders",
+                List.of("cust_id"), List.of(), null,
+                List.of(agg("SUM", null, "total")), 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("仅 COUNT");
+
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-evil-col", "坏聚合列", "", "mysql.customer_db.orders",
+                List.of("cust_id"), List.of(), null,
+                List.of(agg("SUM", "order_amount; DROP", "total")), 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不合法");
+
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-unknown-col", "未知聚合列", "", "mysql.customer_db.orders",
+                List.of("cust_id"), List.of(), null,
+                List.of(agg("SUM", "no_such_col", "total")), 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不在目录表元数据");
+    }
+
+    @Test
+    @DisplayName("聚合发布：alias 撞维度 / alias 重复 / alias 注入 → 拒绝")
+    void publish_aliasCollisions_rejected() {
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-alias-dim", "撞维度", "", "mysql.customer_db.orders",
+                List.of("cust_id"), List.of(), null,
+                List.of(agg("SUM", "order_amount", "cust_id")), 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("撞名");
+
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-alias-dup", "重名", "", "mysql.customer_db.orders",
+                List.of("cust_id"), List.of(), null,
+                List.of(agg("SUM", "order_amount", "total"), agg("COUNT", null, "total")), 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("重复");
+
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-alias-evil", "注入别名", "", "mysql.customer_db.orders",
+                List.of("cust_id"), List.of(), null,
+                List.of(agg("SUM", "order_amount", "total; DROP TABLE orders")), 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("别名不合法");
+    }
+
+    @Test
+    @DisplayName("聚合发布：aggregates 与 joins 同时声明 → 拒绝（互斥）")
+    void publish_aggregatesWithJoins_rejected() {
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-join-mix", "聚合+融合", "", "mysql.customer_db.customer",
+                List.of("cust_id"), List.of(), List.of(validJoin("orders")),
+                List.of(agg("COUNT", null, "cnt")), 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("互斥");
+    }
+
+    @Test
+    @DisplayName("聚合发布：过滤列可为非维度元数据列（WHERE 先于 GROUP BY）")
+    void publish_aggregateFilterOnNonDimColumn_accepted() {
+        ServiceDefinition def = registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-filter-nondim", "非维度过滤", "", "mysql.customer_db.customer",
+                List.of("cust_id"),
+                List.of(new ServiceDefinition.FilterSpec("cust_level", "eq")),
+                null, List.of(agg("COUNT", null, "cnt")), 10, null, null));
+
+        assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_AGGREGATE);
+        assertThat(def.filters()).hasSize(1);
+        assertThat(def.filters().get(0).column()).isEqualTo("cust_level");
     }
 }

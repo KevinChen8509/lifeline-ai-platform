@@ -103,6 +103,7 @@
     .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
     .callcount { font-size: 12px; color: var(--text-dim); margin-left: auto; }
     .badge.fusion { color: #f472b6; border-color: #f472b6; }
+    .badge.agg { color: #fb923c; border-color: #fb923c; }
     .badge.key-active { color: var(--green); border-color: var(--green); }
     .badge.key-revoked { color: var(--red); border-color: var(--red); }
     .join-block { border: 1px dashed var(--border); border-radius: 8px; padding: 12px 14px; margin: 6px 0 12px; background: #172036; }
@@ -115,7 +116,7 @@
   <header class="page-header">
     <div>
       <h1>Week 5/6 · 数据服务市场</h1>
-      <div class="sub">数据资源目录 · 业务场景 · 自助发布参数化 API · 跨表融合定制接口 · 契约验证与服务级 Key 对外开放 · 注册表持久化 / Key 生命周期 / 限流计量（W6-B）</div>
+      <div class="sub">数据资源目录 · 业务场景 · 自助发布参数化 API · 跨表融合定制接口 · 分组聚合服务（SUM/COUNT，W6-C）· 契约验证与服务级 Key 对外开放 · 注册表持久化 / Key 生命周期 / 限流计量（W6-B）</div>
     </div>
     <div class="links">
       <a href="/index.html">Week 1-2</a>
@@ -187,6 +188,7 @@
         <div class="wiz-row">
           <label>返回列</label>
           <div class="check-grid" id="wiz-columns"></div>
+          <span id="wiz-cols-note" style="font-size:12px;color:var(--amber);display:none">📊 聚合模式：勾选列 = GROUP BY 分组维度</span>
         </div>
         <div class="wiz-row">
           <label>过滤参数</label>
@@ -199,13 +201,14 @@
           </select>
           <button class="ghost" id="wiz-add-filter">+ 添加过滤参数</button>
           <span id="wiz-filters-list" style="font-size:12px;color:var(--text-dim)"></span>
+          <span id="wiz-filter-note" style="font-size:12px;color:var(--text-dim)"></span>
         </div>
         <div class="wiz-row">
           <label>融合从表</label>
           <label style="min-width:auto;background:#16213a;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:13px">
             <input type="checkbox" id="wiz-join-on" style="width:auto"> 🌀 跨表融合（主行挂从表嵌套数组，如 客户 + 订单）
           </label>
-          <span style="font-size:12px;color:var(--text-dim)">发布为 fusion 服务，从表列/关联键同样逐字校验目录元数据</span>
+          <span style="font-size:12px;color:var(--text-dim)">发布为 fusion 服务，从表列/关联键同样逐字校验目录元数据（与聚合互斥）</span>
         </div>
         <div class="join-block" id="wiz-join-block" style="display:none">
           <div class="wiz-row">
@@ -227,6 +230,23 @@
             <label style="min-width:auto">主表列</label>
             <select id="wiz-parent-col" style="min-width:150px"></select>
             <span style="font-size:12px;color:var(--text-dim)">（主表列须已勾选进返回列）</span>
+          </div>
+        </div>
+        <div class="wiz-row">
+          <label>聚合分析</label>
+          <label style="min-width:auto;background:#16213a;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="wiz-agg-on" style="width:auto"> 📊 分组聚合（GROUP BY 维度 + SUM/COUNT 聚合列，如 按客户汇总订单）
+          </label>
+          <span style="font-size:12px;color:var(--text-dim)">发布为 aggregate 服务，聚合函数/列/别名白名单校验（与融合互斥）</span>
+        </div>
+        <div class="join-block" id="wiz-agg-block" style="display:none">
+          <div class="wiz-row" style="margin-bottom:6px">
+            <span style="font-size:12px;color:var(--amber)">输出 = 分组维度 + 聚合别名（勾选的返回列作 GROUP BY，聚合列声明如下）· 过滤参数在聚合前生效（WHERE 先于 GROUP BY，可用非维度列）</span>
+          </div>
+          <div id="wiz-agg-rows"></div>
+          <div class="wiz-row">
+            <button class="ghost" id="wiz-agg-add">+ 添加聚合列（≤5）</button>
+            <span style="font-size:12px;color:var(--text-dim)">函数白名单 SUM/COUNT/AVG/MIN/MAX · 仅 COUNT 可选 * = COUNT(*) · 别名须为合法标识符且不与维度撞名</span>
           </div>
         </div>
         <div class="wiz-row">
@@ -254,7 +274,7 @@
     <section class="tab-panel" id="panel-verify">
       <div class="wizard">
         <h3>🧪 服务验证台</h3>
-        <div class="hint">发布 ≠ 交付 —— 单表服务跑 V1-V5（正常调用 · 注入防御 · 未知参数拒绝 · LIMIT 钳制 · 发布白名单闸），融合服务跑 FV1-FV7（另含关联一致性自检 + 金标用例）。全部通过即可放心交付消费方（与 mvn 129/129 测试同一防线）。注意：服务限流过低会导致套件连跑触发 429</div>
+        <div class="hint">发布 ≠ 交付 —— 单表服务跑 V1-V5（正常调用 · 注入防御 · 未知参数拒绝 · LIMIT 钳制 · 发布白名单闸），融合服务跑 FV1-FV7（另含关联一致性自检 + 金标用例），聚合服务跑 AV1-AV5（另含聚合数值性校验 + 别名注入双探针）。全部通过即可放心交付消费方（与 mvn 141/141 测试同一防线）。注意：服务限流过低会导致套件连跑触发 429</div>
         <div class="wiz-row">
           <label>验证对象</label>
           <select id="verify-slug" style="min-width:340px"></select>

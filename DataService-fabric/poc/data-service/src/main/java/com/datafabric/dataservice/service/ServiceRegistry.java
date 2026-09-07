@@ -22,7 +22,7 @@ import java.util.regex.Pattern;
 
 /**
  * W5/W6 服务注册表：
- * builtin 静态 6 条 + 自助发布 table-query / fusion 条目；发布校验是防注入的第一道闸 ——
+ * builtin 静态 6 条 + 自助发布 table-query / fusion / aggregate 条目；发布校验是防注入的第一道闸 ——
  * 主表/从表的列名与关联键必须逐字命中 OpenMetadata 元数据，杜绝任意标识符进 SQL。
  *
  * W6-A 对外开放：发布即生成服务级 API Key（仅可调用自身 /query，双通道见 SecurityConfig）。
@@ -43,22 +43,27 @@ public class ServiceRegistry {
     private static final int MAX_LIMIT = 500;
     private static final int MAX_JOINS = 2;
     private static final int MAX_PER_PARENT = 50;
+    private static final int MAX_AGGREGATES = 5;
+    private static final Set<String> AGG_FUNCTIONS = Set.of("SUM", "COUNT", "AVG", "MIN", "MAX");
     private static final int DEFAULT_RATE_LIMIT_PER_MIN = 60;
     private static final int MAX_RATE_LIMIT_PER_MIN = 600;
     private static final long MAX_TTL_HOURS = 24L * 365 * 10;
     private static final long RATE_WINDOW_MS = 60_000;
     private static final SecureRandom RANDOM = new SecureRandom();
 
-    /** 发布请求体（fqn 为主表目录全限定名，table 取其末段；joins 非空 → fusion 形态） */
+    /** 发布请求体（fqn 为主表目录全限定名，table 取其末段；joins 非空 → fusion；aggregates 非空 → aggregate） */
     public record PublishRequest(
             String slug, String name, String description, String fqn,
             List<String> allowedColumns, List<ServiceDefinition.FilterSpec> filters,
-            List<JoinRequest> joins, Integer defaultLimit,
+            List<JoinRequest> joins, List<AggRequest> aggregates, Integer defaultLimit,
             Integer rateLimitPerMin, Long keyTtlHours) {}
 
     /** 融合从表发布声明 */
     public record JoinRequest(String fqn, String name, List<String> columns,
                               String joinColumn, String parentColumn, Integer limitPerParent) {}
+
+    /** 聚合列发布声明（W6-C；column 空仅 COUNT = COUNT(*)） */
+    public record AggRequest(String function, String column, String alias) {}
 
     private final OpenMetadataClient omClient;
     private final ServiceRegistryStore store;
@@ -87,22 +92,22 @@ public class ServiceRegistry {
     private static final List<ServiceDefinition> BUILTIN = List.of(
             new ServiceDefinition("customer-profile", "客户画像", "单客户全量画像（脱敏 + 审计 + 血缘三切面）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers/{custId}/profile",
-                    null, null, List.of(), List.of(), List.of(), 1, null, null, null),
+                    null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("customer-brief", "客户简报", "简要画像（强制隐藏身份证与风险分）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers/{custId}/brief",
-                    null, null, List.of(), List.of(), List.of(), 1, null, null, null),
+                    null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("customer-search", "客户分群查询", "按等级/风险过滤 + 分页（F7 服务端过滤）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers?level={level}&riskLevel={riskLevel}&page={page}&size={size}",
-                    null, null, List.of(), List.of(), List.of(), 20, null, null, null),
+                    null, null, List.of(), List.of(), List.of(), List.of(), 20, null, null, null),
             new ServiceDefinition("customer-overview", "客户总览指标", "ARPU / VIP3 / 风险分布快照（Cube 语义层）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/metrics/customer-overview",
-                    null, null, List.of(), List.of(), List.of(), 1, null, null, null),
+                    null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("agent-insight", "AI 治理问答（A 路）", "自然语言 → 治理校验 + 审计血缘落账 → 语义层查询",
                     ServiceDefinition.TYPE_BUILTIN, "POST", "/api/v1/agent/insight",
-                    null, null, List.of(), List.of(), List.of(), 1, null, null, null),
+                    null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("agent-raw", "AI 直连问答（B 路）", "自然语言 → 直连 JDBC（无治理对照）",
                     ServiceDefinition.TYPE_BUILTIN, "POST", "/api/v1/agent/raw",
-                    null, null, List.of(), List.of(), List.of(), 1, null, null, null));
+                    null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null));
 
     /** 发布一个 table-query / fusion 服务（校验失败抛 IllegalArgumentException → 400） */
     public ServiceDefinition publish(PublishRequest req) {
@@ -138,10 +143,18 @@ public class ServiceRegistry {
                 throw new IllegalArgumentException("列 " + col + " 不在目录表 " + req.fqn() + " 的元数据中");
             }
         }
-        List<ServiceDefinition.FilterSpec> filters = normalizeFilters(req.filters(), columns);
-
         // 第一道闸（融合从表）：列/关联键逐字命中从表 OM 元数据，主表关联键 ∈ 主表白名单
         List<ServiceDefinition.JoinSpec> joins = normalizeJoins(req.joins(), columns);
+
+        // 第一道闸（聚合列，W6-C）：函数白名单 + 列逐字命中 OM 元数据 + alias 唯一；与 joins 互斥
+        List<ServiceDefinition.AggSpec> aggregates = normalizeAggregates(req.aggregates(), metaColumns, columns);
+        if (!aggregates.isEmpty() && !joins.isEmpty()) {
+            throw new IllegalArgumentException("聚合与融合互斥，不能同时声明（聚合+组合属 Phase 3+）");
+        }
+        // 聚合形态的过滤列放宽为「命中元数据即可」（WHERE 先于 GROUP BY，非维度列合法）；
+        // table-query / fusion 保持过滤列 ∈ allowedColumns 的旧不变式
+        List<ServiceDefinition.FilterSpec> filters = normalizeFilters(
+                req.filters(), !aggregates.isEmpty() ? metaColumns : columns);
 
         int defaultLimit = req.defaultLimit() == null ? 20 : req.defaultLimit();
         if (defaultLimit < 1 || defaultLimit > MAX_LIMIT) {
@@ -154,19 +167,20 @@ public class ServiceRegistry {
         }
         Instant keyExpiresAt = ttlToExpiry(req.keyTtlHours());
 
-        String type = joins.isEmpty() ? ServiceDefinition.TYPE_TABLE_QUERY : ServiceDefinition.TYPE_FUSION;
+        String type = !aggregates.isEmpty() ? ServiceDefinition.TYPE_AGGREGATE
+                : joins.isEmpty() ? ServiceDefinition.TYPE_TABLE_QUERY : ServiceDefinition.TYPE_FUSION;
         ServiceDefinition def = new ServiceDefinition(slug, req.name().trim(),
                 req.description() == null ? "" : req.description().trim(),
                 type, null, null,
-                source, table, List.copyOf(columns), filters, joins, defaultLimit,
+                source, table, List.copyOf(columns), filters, joins, aggregates, defaultLimit,
                 generateApiKey(),
                 new ServiceDefinition.KeyPolicy(
                         ServiceDefinition.KeyPolicy.STATUS_ACTIVE, keyExpiresAt, rateLimitPerMin),
                 Instant.now());
         published.put(slug, def);
         store.save(def);
-        log.info("服务发布: {} -> {} ({} 列 / {} 过滤参数 / {} 融合从表 / key=sk-…{} / 限流 {}/min / 过期 {})",
-                slug, req.fqn(), columns.size(), filters.size(), joins.size(),
+        log.info("服务发布: {} -> {} ({} 列 / {} 过滤参数 / {} 融合从表 / {} 聚合列 / key=sk-…{} / 限流 {}/min / 过期 {})",
+                slug, req.fqn(), columns.size(), filters.size(), joins.size(), aggregates.size(),
                 def.apiKey().substring(def.apiKey().length() - 4),
                 rateLimitPerMin, keyExpiresAt == null ? "永久" : keyExpiresAt);
         return def;
@@ -245,8 +259,51 @@ public class ServiceRegistry {
         return List.copyOf(out);
     }
 
+    /**
+     * 聚合列校验链（W6-C 受限 DSL）：函数白名单 + 列逐字命中主表元数据 +
+     * alias 标识符唯一不撞维度；与 joins 互斥（聚合+融合不组合，Phase 3+）。
+     */
+    private static List<ServiceDefinition.AggSpec> normalizeAggregates(
+            List<AggRequest> aggregates, Set<String> metaColumns, List<String> dims) {
+        if (aggregates == null || aggregates.isEmpty()) {
+            return List.of();
+        }
+        if (aggregates.size() > MAX_AGGREGATES) {
+            throw new IllegalArgumentException("聚合列最多 " + MAX_AGGREGATES + " 个");
+        }
+        List<ServiceDefinition.AggSpec> out = new ArrayList<>();
+        List<String> aliases = new ArrayList<>();
+        for (AggRequest a : aggregates) {
+            if (a == null || a.function() == null || a.alias() == null) {
+                throw new IllegalArgumentException("aggregates 每项需含 function 与 alias");
+            }
+            String function = a.function().trim().toUpperCase(Locale.ROOT);
+            if (!AGG_FUNCTIONS.contains(function)) {
+                throw new IllegalArgumentException("聚合函数仅支持 SUM/COUNT/AVG/MIN/MAX: " + a.function());
+            }
+            String alias = requireMatch(a.alias(), IDENTIFIER_PATTERN, "聚合别名不合法: " + a.alias());
+            if (aliases.contains(alias) || dims.contains(alias)) {
+                throw new IllegalArgumentException("聚合别名重复或与分组维度撞名: " + alias);
+            }
+            aliases.add(alias);
+            String column = a.column() == null ? null : a.column().trim();
+            if (column == null || column.isEmpty()) {
+                if (!"COUNT".equals(function)) {
+                    throw new IllegalArgumentException("仅 COUNT 允许空列（COUNT(*)）: " + function);
+                }
+            } else {
+                requireMatch(column, IDENTIFIER_PATTERN, "聚合列名不合法: " + column);
+                if (!metaColumns.contains(column)) {
+                    throw new IllegalArgumentException("聚合列 " + column + " 不在目录表元数据中");
+                }
+            }
+            out.add(new ServiceDefinition.AggSpec(function, column, alias));
+        }
+        return List.copyOf(out);
+    }
+
     private static List<ServiceDefinition.FilterSpec> normalizeFilters(
-            List<ServiceDefinition.FilterSpec> filters, List<String> columns) {
+            List<ServiceDefinition.FilterSpec> filters, java.util.Collection<String> columns) {
         if (filters == null || filters.isEmpty()) {
             return List.of();
         }
@@ -369,7 +426,7 @@ public class ServiceRegistry {
                 ? DEFAULT_RATE_LIMIT_PER_MIN : def.keyPolicy().rateLimitPerMin();
         ServiceDefinition updated = new ServiceDefinition(def.slug(), def.name(), def.description(),
                 def.type(), def.method(), def.pathTemplate(), def.source(), def.table(),
-                def.allowedColumns(), def.filters(), def.joins(), def.defaultLimit(),
+                def.allowedColumns(), def.filters(), def.joins(), def.aggregates(), def.defaultLimit(),
                 apiKey, new ServiceDefinition.KeyPolicy(status, expiresAt, rateLimitPerMin),
                 def.createdAt());
         published.put(def.slug(), updated);

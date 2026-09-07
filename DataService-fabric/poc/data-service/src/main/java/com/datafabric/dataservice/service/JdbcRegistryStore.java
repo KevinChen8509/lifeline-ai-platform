@@ -55,6 +55,7 @@ public class JdbcRegistryStore implements ServiceRegistryStore {
               `allowed_columns` VARCHAR(4096) NOT NULL,
               `filters` VARCHAR(4096) NOT NULL,
               `joins` VARCHAR(8192) NOT NULL,
+              `aggregates` VARCHAR(2048),
               `default_limit` INT NOT NULL,
               `api_key` VARCHAR(64) NOT NULL,
               `key_status` VARCHAR(16) NOT NULL,
@@ -62,6 +63,10 @@ public class JdbcRegistryStore implements ServiceRegistryStore {
               `rate_limit_per_min` INT NOT NULL,
               `created_at` TIMESTAMP NOT NULL
             )""";
+
+    /** W6-C 迁移：W6-B 落库的旧表补 aggregates 列（旧行 NULL → fromRow 兜底空列表） */
+    private static final String DDL_MIGRATE_AGGREGATES =
+            "ALTER TABLE `service_def` ADD COLUMN IF NOT EXISTS `aggregates` VARCHAR(2048)";
 
     private static final String DDL_USAGE = """
             CREATE TABLE IF NOT EXISTS `service_usage` (
@@ -77,6 +82,7 @@ public class JdbcRegistryStore implements ServiceRegistryStore {
         }
         try (java.sql.Statement st = conn.createStatement()) {
             st.execute(DDL);
+            st.execute(DDL_MIGRATE_AGGREGATES);
             st.execute(DDL_USAGE);
         }
         schemaReady = true;
@@ -86,8 +92,12 @@ public class JdbcRegistryStore implements ServiceRegistryStore {
     public void save(ServiceDefinition def) {
         try (Connection conn = pool.getConnection()) {
             ensureSchema(conn);
+            // 显式列清单：ALTER 迁移追加的 aggregates 物理上在表尾，位置绑定会错位（E2E 实证）
             String sql = """
-                    MERGE INTO `service_def` KEY(`slug`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""";
+                    MERGE INTO `service_def` (`slug`,`name`,`description`,`type`,`source`,`tbl`,
+                      `allowed_columns`,`filters`,`joins`,`aggregates`,`default_limit`,`api_key`,
+                      `key_status`,`key_expires_at`,`rate_limit_per_min`,`created_at`)
+                      KEY(`slug`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""";
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
                 ps.setString(1, def.slug());
                 ps.setString(2, def.name());
@@ -98,13 +108,14 @@ public class JdbcRegistryStore implements ServiceRegistryStore {
                 ps.setString(7, writeJson(def.allowedColumns()));
                 ps.setString(8, writeJson(def.filters()));
                 ps.setString(9, writeJson(def.joins()));
-                ps.setInt(10, def.defaultLimit());
-                ps.setString(11, def.apiKey());
-                ps.setString(12, def.keyPolicy() == null ? "NONE" : def.keyPolicy().status());
-                ps.setTimestamp(13, def.keyPolicy() == null || def.keyPolicy().expiresAt() == null
+                ps.setString(10, writeJson(def.aggregates()));
+                ps.setInt(11, def.defaultLimit());
+                ps.setString(12, def.apiKey());
+                ps.setString(13, def.keyPolicy() == null ? "NONE" : def.keyPolicy().status());
+                ps.setTimestamp(14, def.keyPolicy() == null || def.keyPolicy().expiresAt() == null
                         ? null : Timestamp.from(def.keyPolicy().expiresAt()));
-                ps.setInt(14, def.keyPolicy() == null ? 0 : def.keyPolicy().rateLimitPerMin());
-                ps.setTimestamp(15, Timestamp.from(def.createdAt()));
+                ps.setInt(15, def.keyPolicy() == null ? 0 : def.keyPolicy().rateLimitPerMin());
+                ps.setTimestamp(16, Timestamp.from(def.createdAt()));
                 ps.executeUpdate();
             }
         } catch (SQLException e) {
@@ -164,6 +175,8 @@ public class JdbcRegistryStore implements ServiceRegistryStore {
                         new TypeReference<List<ServiceDefinition.FilterSpec>>() {}),
                 readJsonList(rs.getString("joins"),
                         new TypeReference<List<ServiceDefinition.JoinSpec>>() {}),
+                readJsonList(rs.getString("aggregates"),
+                        new TypeReference<List<ServiceDefinition.AggSpec>>() {}),
                 rs.getInt("default_limit"), rs.getString("api_key"), policy,
                 rs.getTimestamp("created_at").toInstant());
     }
@@ -239,6 +252,10 @@ public class JdbcRegistryStore implements ServiceRegistryStore {
     }
 
     private static <T> List<T> readJsonList(String json, TypeReference<List<T>> type) {
+        // 旧行迁移后 JSON 列可能为 NULL（W6-C 前落库）→ 按空列表兜底
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
         List<T> v = readJson(json, type);
         return v == null ? List.of() : v;
     }

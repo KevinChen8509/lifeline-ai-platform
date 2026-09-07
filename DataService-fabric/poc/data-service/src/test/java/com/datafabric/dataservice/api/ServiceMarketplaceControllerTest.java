@@ -531,4 +531,145 @@ class ServiceMarketplaceControllerTest {
                         .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
                 .andExpect(status().isNotFound());
     }
+
+    // ============ W6-C 聚合列 DSL ============
+
+    /** 聚合发布体：orders 表 GROUP BY cust_id + COUNT(*)/SUM(order_amount) */
+    private String aggregateBody(String slug) {
+        return """
+                {
+                  "slug": "%s",
+                  "name": "按客户聚合订单",
+                  "description": "W6-C 聚合",
+                  "fqn": "mysql.customer_db.orders",
+                  "allowedColumns": ["cust_id"],
+                  "filters": [],
+                  "aggregates": [
+                    {"function": "COUNT", "column": null, "alias": "order_count"},
+                    {"function": "SUM", "column": "order_amount", "alias": "total_amount"}
+                  ],
+                  "defaultLimit": 10
+                }""".formatted(slug);
+    }
+
+    @Test
+    @DisplayName("聚合金标：GROUP BY cust_id → C0001 order_count=2 / total_amount=4670.50")
+    void aggregatePublishThenQuery_goldenRow() throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(aggregateBody("orders-by-cust-golden")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.service.type").value("aggregate"))
+                .andExpect(jsonPath("$.service.apiKey").isNotEmpty());
+
+        mockMvc.perform(get("/api/v1/services/orders-by-cust-golden/query")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(3))
+                // 输出契约：columns = 维度 + 聚合别名
+                .andExpect(jsonPath("$.columns.length()").value(3))
+                // ORDER BY 1 稳定次序：C0001 首行（金标 2 单 / 1290.00+3380.50）
+                .andExpect(jsonPath("$.rows[0].cust_id").value("C0001"))
+                .andExpect(jsonPath("$.rows[0].order_count").value("2"))
+                .andExpect(jsonPath("$.rows[0].total_amount").value("4670.50"))
+                .andExpect(jsonPath("$.rows[1].cust_id").value("C0002"))
+                .andExpect(jsonPath("$.rows[1].order_count").value("1"))
+                .andExpect(jsonPath("$.rows[1].total_amount").value("860.00"));
+    }
+
+    @Test
+    @DisplayName("聚合非维度列过滤：WHERE cust_level=VIP1 先于 GROUP BY → 只出 VIP1 客户行")
+    void aggregateQuery_filterOnNonDimColumn() throws Exception {
+        String body = """
+                {
+                  "slug": "agg-filter-nondim-e2e",
+                  "name": "非维度过滤聚合",
+                  "fqn": "mysql.customer_db.customer",
+                  "allowedColumns": ["cust_id"],
+                  "filters": [{"column": "cust_level", "operator": "eq"}],
+                  "aggregates": [{"function": "COUNT", "column": null, "alias": "cnt"}],
+                  "defaultLimit": 10
+                }""";
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/v1/services/agg-filter-nondim-e2e/query")
+                        .param("cust_level", "VIP1")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.rows[0].cust_id").value("C0003"))
+                .andExpect(jsonPath("$.rows[0].cnt").value("1"));
+    }
+
+    @Test
+    @DisplayName("聚合注入：过滤值 OR 恒真 payload → 200 且 total=0（全值绑定）")
+    void aggregateQuery_injectionPayload_zeroRows() throws Exception {
+        String body = """
+                {
+                  "slug": "agg-inject-e2e",
+                  "name": "注入聚合",
+                  "fqn": "mysql.customer_db.customer",
+                  "allowedColumns": ["cust_id"],
+                  "filters": [{"column": "cust_level", "operator": "eq"}],
+                  "aggregates": [{"function": "COUNT", "column": null, "alias": "cnt"}],
+                  "defaultLimit": 10
+                }""";
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated());
+
+        MvcResult result = mockMvc.perform(get("/api/v1/services/agg-inject-e2e/query")
+                        .param("cust_level", "VIP1' OR '1'='1")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsString()).contains("\"total\":0");
+    }
+
+    @Test
+    @DisplayName("聚合契约：未注册的过滤参数 → 400（不静默忽略）")
+    void aggregateQuery_unknownParam_badRequest() throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(aggregateBody("agg-strict-e2e")))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/v1/services/agg-strict-e2e/query")
+                        .param("order_time", "2026-04-01")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("BAD_REQUEST"));
+    }
+
+    @Test
+    @DisplayName("聚合发布闸：alias 塞注入 payload → 400；聚合+融合同报 → 400")
+    void aggregatePublish_evilAliasAndJoinsMix_badRequest() throws Exception {
+        String evilAlias = aggregateBody("agg-alias-evil")
+                .replace("\"alias\": \"total_amount\"", "\"alias\": \"total; DROP TABLE orders\"");
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(evilAlias))
+                .andExpect(status().isBadRequest());
+
+        String mix = aggregateBody("agg-join-mix-e2e")
+                .replace("\"filters\": []", "\"filters\": [], \"joins\": [" +
+                        "{\"fqn\": \"mysql.customer_db.customer\", \"name\": \"c\", " +
+                        "\"columns\": [\"cust_name\"], \"joinColumn\": \"cust_id\", " +
+                        "\"parentColumn\": \"cust_id\", \"limitPerParent\": 10}]");
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(mix))
+                .andExpect(status().isBadRequest());
+    }
 }
