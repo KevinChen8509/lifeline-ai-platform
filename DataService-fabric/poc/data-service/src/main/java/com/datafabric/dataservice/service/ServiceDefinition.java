@@ -21,6 +21,10 @@ import java.util.List;
  * aggregate 形态：filters.column 可为元数据任意列（WHERE 先于 GROUP BY），
  * aggregates 的 column 逐字命中元数据（COUNT 可空列 = COUNT(*)），alias 标识符唯一。
  *
+ * W6-D 跨源融合：database（FQN 中段）随定义持久化，执行时 FROM 显式限定 库.表，
+ * 标识符引号按源选方言（postgres 双引号，mysql/clickhouse 反引号）——
+ * 从表可跨源（attachJoins 按从表 FQN 前缀路由连接池，应用层关联合并）。
+ *
  * 对外开放：自助发布服务携带服务级 apiKey（仅可调用自身 /query，见 SecurityConfig 双通道）。
  * W6-B 运营化：apiKey 附带 KeyPolicy（状态/过期/限流）——吊销或过期的 key 即刻失效，
  * 每服务每分钟调用上限，注册表持久化到平台 H2 文件库（重启 Key 不变）。
@@ -33,6 +37,7 @@ public record ServiceDefinition(
         String method,
         String pathTemplate,
         String source,
+        String database,
         String table,
         List<String> allowedColumns,
         List<FilterSpec> filters,

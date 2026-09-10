@@ -41,7 +41,7 @@ class JdbcRegistryStoreTest {
     private static ServiceDefinition sampleFusion(String slug) {
         return new ServiceDefinition(
                 slug, "客户订单融合", "持久化往返", ServiceDefinition.TYPE_FUSION, null, null,
-                "mysql", "customer",
+                "mysql", "customer_db", "customer",
                 List.of("cust_id", "cust_name"),
                 List.of(new ServiceDefinition.FilterSpec("cust_id", "eq")),
                 List.of(new ServiceDefinition.JoinSpec(
@@ -70,6 +70,7 @@ class JdbcRegistryStoreTest {
         assertThat(restored.name()).isEqualTo(original.name());
         assertThat(restored.type()).isEqualTo(ServiceDefinition.TYPE_FUSION);
         assertThat(restored.source()).isEqualTo("mysql");
+        assertThat(restored.database()).isEqualTo("customer_db"); // W6-D：FQN 中段落库
         assertThat(restored.table()).isEqualTo("customer");
         assertThat(restored.allowedColumns()).containsExactly("cust_id", "cust_name");
         assertThat(restored.filters()).containsExactly(new ServiceDefinition.FilterSpec("cust_id", "eq"));
@@ -94,7 +95,7 @@ class JdbcRegistryStoreTest {
         store.save(sampleFusion("upsert-svc"));
         ServiceDefinition rotated = new ServiceDefinition(
                 "upsert-svc", "新 key 版", "", ServiceDefinition.TYPE_TABLE_QUERY, null, null,
-                "mysql", "customer",
+                "mysql", "customer_db", "customer",
                 List.of("cust_id"), List.of(), List.of(), List.of(), 10, "sk-w6-newkey0002",
                 new ServiceDefinition.KeyPolicy(
                         ServiceDefinition.KeyPolicy.STATUS_REVOKED, null, 60),
@@ -144,7 +145,7 @@ class JdbcRegistryStoreTest {
     private static ServiceDefinition sampleAggregate(String slug) {
         return new ServiceDefinition(
                 slug, "按客户聚合订单", "W6-C 往返", ServiceDefinition.TYPE_AGGREGATE, null, null,
-                "mysql", "orders",
+                "mysql", "customer_db", "orders",
                 List.of("cust_id"),
                 List.of(),
                 List.of(),
@@ -218,14 +219,16 @@ class JdbcRegistryStoreTest {
                 .filter(d -> d.slug().equals("agg-on-migrated-table"))
                 .findFirst().orElseThrow();
 
-        // 旧行：aggregates NULL → 兜底空列表，不炸反序列化
+        // 旧行：aggregates NULL → 兜底空列表，不炸反序列化；db_name 同样 NULL → database=null
         assertThat(legacy.type()).isEqualTo(ServiceDefinition.TYPE_FUSION);
         assertThat(legacy.aggregates()).isEmpty();
+        assertThat(legacy.database()).isNull();
         // 新行：聚合定义逐字段落库（曾因列序错位报 Data conversion 降级 —— E2E 实证）
         assertThat(agg.type()).isEqualTo(ServiceDefinition.TYPE_AGGREGATE);
         assertThat(agg.aggregates()).hasSize(2);
         assertThat(agg.aggregates().get(0).sqlExpr()).isEqualTo("COUNT(*)");
         assertThat(agg.aggregates().get(1).sqlExpr()).isEqualTo("SUM(`order_amount`)");
         assertThat(agg.defaultLimit()).isEqualTo(10); // 错位时 JSON 曾落进 DEFAULT_LIMIT
+        assertThat(agg.database()).isEqualTo("customer_db"); // W6-D：db_name 列也经 ALTER 追加在表尾
     }
 }

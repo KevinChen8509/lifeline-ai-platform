@@ -52,7 +52,7 @@ http.createServer((req, res) => {
   if (req.url.startsWith('/api/v1/tables')) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(tables));
-    console.log(`[${new Date().toISOString()}] GET ${req.url} -> 200 (3 tables)`);
+    console.log(`[${new Date().toISOString()}] GET ${req.url} -> 200 (${tables.data.length} tables)`);
   } else {
     res.writeHead(404);
     res.end('{}');

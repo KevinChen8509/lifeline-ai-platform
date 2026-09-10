@@ -92,22 +92,22 @@ public class ServiceRegistry {
     private static final List<ServiceDefinition> BUILTIN = List.of(
             new ServiceDefinition("customer-profile", "客户画像", "单客户全量画像（脱敏 + 审计 + 血缘三切面）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers/{custId}/profile",
-                    null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
+                    null, null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("customer-brief", "客户简报", "简要画像（强制隐藏身份证与风险分）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers/{custId}/brief",
-                    null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
+                    null, null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("customer-search", "客户分群查询", "按等级/风险过滤 + 分页（F7 服务端过滤）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/customers?level={level}&riskLevel={riskLevel}&page={page}&size={size}",
-                    null, null, List.of(), List.of(), List.of(), List.of(), 20, null, null, null),
+                    null, null, null, List.of(), List.of(), List.of(), List.of(), 20, null, null, null),
             new ServiceDefinition("customer-overview", "客户总览指标", "ARPU / VIP3 / 风险分布快照（Cube 语义层）",
                     ServiceDefinition.TYPE_BUILTIN, "GET", "/api/v1/metrics/customer-overview",
-                    null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
+                    null, null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("agent-insight", "AI 治理问答（A 路）", "自然语言 → 治理校验 + 审计血缘落账 → 语义层查询",
                     ServiceDefinition.TYPE_BUILTIN, "POST", "/api/v1/agent/insight",
-                    null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
+                    null, null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null),
             new ServiceDefinition("agent-raw", "AI 直连问答（B 路）", "自然语言 → 直连 JDBC（无治理对照）",
                     ServiceDefinition.TYPE_BUILTIN, "POST", "/api/v1/agent/raw",
-                    null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null));
+                    null, null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null));
 
     /** 发布一个 table-query / fusion 服务（校验失败抛 IllegalArgumentException → 400） */
     public ServiceDefinition publish(PublishRequest req) {
@@ -125,6 +125,8 @@ public class ServiceRegistry {
         if (!SOURCES.contains(source)) {
             throw new IllegalArgumentException("不支持的源: " + source + "（可选 mysql/clickhouse/postgres）");
         }
+        String database = middleSegment(req.fqn());
+        requireMatch(database, IDENTIFIER_PATTERN, "库名不合法: " + database);
         String table = lastSegment(req.fqn());
         requireMatch(table, IDENTIFIER_PATTERN, "表名不合法: " + table);
 
@@ -172,7 +174,7 @@ public class ServiceRegistry {
         ServiceDefinition def = new ServiceDefinition(slug, req.name().trim(),
                 req.description() == null ? "" : req.description().trim(),
                 type, null, null,
-                source, table, List.copyOf(columns), filters, joins, aggregates, defaultLimit,
+                source, database, table, List.copyOf(columns), filters, joins, aggregates, defaultLimit,
                 generateApiKey(),
                 new ServiceDefinition.KeyPolicy(
                         ServiceDefinition.KeyPolicy.STATUS_ACTIVE, keyExpiresAt, rateLimitPerMin),
@@ -425,7 +427,7 @@ public class ServiceRegistry {
         int rateLimitPerMin = def.keyPolicy() == null
                 ? DEFAULT_RATE_LIMIT_PER_MIN : def.keyPolicy().rateLimitPerMin();
         ServiceDefinition updated = new ServiceDefinition(def.slug(), def.name(), def.description(),
-                def.type(), def.method(), def.pathTemplate(), def.source(), def.table(),
+                def.type(), def.method(), def.pathTemplate(), def.source(), def.database(), def.table(),
                 def.allowedColumns(), def.filters(), def.joins(), def.aggregates(), def.defaultLimit(),
                 apiKey, new ServiceDefinition.KeyPolicy(status, expiresAt, rateLimitPerMin),
                 def.createdAt());
@@ -479,6 +481,11 @@ public class ServiceRegistry {
 
     private static String lastSegment(String fqn) {
         return fqn.substring(fqn.lastIndexOf('.') + 1);
+    }
+
+    /** FQN 中段（库名/模式名）：source.database.table → database */
+    private static String middleSegment(String fqn) {
+        return fqn.substring(fqn.indexOf('.') + 1, fqn.lastIndexOf('.'));
     }
 
     private static String requireMatch(String value, Pattern pattern, String message) {

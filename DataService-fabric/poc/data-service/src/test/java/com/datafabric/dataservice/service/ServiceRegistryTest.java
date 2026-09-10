@@ -70,6 +70,7 @@ class ServiceRegistryTest {
         assertThat(def.slug()).isEqualTo("vip-customers");
         assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_TABLE_QUERY);
         assertThat(def.source()).isEqualTo("mysql");
+        assertThat(def.database()).isEqualTo("customer_db"); // W6-D：FQN 中段解析
         assertThat(def.table()).isEqualTo("customer");
         assertThat(def.allowedColumns()).containsExactly("cust_id", "cust_name", "cust_level");
         assertThat(def.createdAt()).isNotNull();

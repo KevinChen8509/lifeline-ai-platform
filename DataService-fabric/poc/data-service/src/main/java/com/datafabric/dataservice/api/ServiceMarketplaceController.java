@@ -172,8 +172,10 @@ public class ServiceMarketplaceController {
                 rows.add(new LinkedHashMap<String, Object>(r));
             }
             attachJoins(def, rows);
-            serviceCallLog.info("{\"slug\":\"{}\",\"type\":\"fusion\",\"source\":\"{}\",\"table\":\"{}\",\"filters\":{},\"rows\":{},\"joins\":{},\"limit\":{},\"elapsedMs\":{}}",
-                    slug, def.source(), def.table(), params.size(), rows.size(), def.joins().size(), limit, elapsed);
+            serviceCallLog.info("{\"slug\":\"{}\",\"type\":\"fusion\",\"source\":\"{}\",\"table\":\"{}\",\"joinSources\":{},\"filters\":{},\"rows\":{},\"joins\":{},\"limit\":{},\"elapsedMs\":{}}",
+                    slug, def.source(), def.table(),
+                    def.joins().stream().map(j -> j.fqn().substring(0, j.fqn().indexOf('.')).toLowerCase(java.util.Locale.ROOT)).toList(),
+                    params.size(), rows.size(), def.joins().size(), limit, elapsed);
             return new FusionQueryResponse(slug, def.allowedColumns(),
                     def.joins().stream().map(j -> new JoinView(j.name(), j.columns())).toList(),
                     rows, rows.size(), elapsed);
@@ -216,10 +218,13 @@ public class ServiceMarketplaceController {
             StringBuilder sql = new StringBuilder("SELECT ");
             List<String> selectCols = new ArrayList<>(join.columns());
             selectCols.add(join.joinColumn());
-            sql.append(selectCols.stream().map(c -> "`" + c + "`")
+            sql.append(selectCols.stream().map(c -> q(c, joinSource))
                     .reduce((a, b) -> a + ", " + b).orElseThrow());
-            sql.append(" FROM `").append(joinTable).append("` WHERE `")
-                    .append(join.joinColumn()).append("` IN (");
+            String joinDatabase = join.fqn().substring(join.fqn().indexOf('.') + 1,
+                    join.fqn().lastIndexOf('.'));
+            checkIdentifier(joinDatabase);
+            sql.append(" FROM ").append(qualifiedTable(joinDatabase, joinTable, joinSource))
+                    .append(" WHERE ").append(q(join.joinColumn(), joinSource)).append(" IN (");
             sql.append("?, ".repeat(parentValues.size() - 1)).append("?)");
             sql.append(" LIMIT ").append((long) join.limitPerParent() * parentValues.size());
 
@@ -302,14 +307,14 @@ public class ServiceMarketplaceController {
 
         StringBuilder sql = new StringBuilder("SELECT ");
         sql.append(def.allowedColumns().stream()
-                .map(c -> "`" + c + "`")
+                .map(c -> q(c, def.source()))
                 .reduce((a, b) -> a + ", " + b).orElseThrow());
-        sql.append(" FROM `").append(def.table()).append("`");
+        sql.append(" FROM ").append(qualifiedTable(def.database(), def.table(), def.source()));
         List<String> values = new ArrayList<>();
         boolean firstFilter = true;
         for (ServiceDefinition.FilterSpec f : applied) {
-            sql.append(firstFilter ? " WHERE " : " AND ").append("`")
-                    .append(f.column()).append("` ")
+            sql.append(firstFilter ? " WHERE " : " AND ").append(q(f.column(), def.source()))
+                    .append(" ")
                     .append(operatorSql(f.operator())).append(" ?");
             firstFilter = false;
             String value = params.get(f.column());
@@ -363,24 +368,25 @@ public class ServiceMarketplaceController {
 
         StringBuilder sql = new StringBuilder("SELECT ");
         sql.append(def.allowedColumns().stream()
-                .map(c -> "`" + c + "`")
+                .map(c -> q(c, def.source()))
                 .reduce((a, b) -> a + ", " + b).orElseThrow());
         for (ServiceDefinition.AggSpec agg : def.aggregates()) {
-            sql.append(", ").append(agg.sqlExpr()).append(" AS `").append(agg.alias()).append("`");
+            sql.append(", ").append(aggSqlExpr(agg, def.source())).append(" AS ")
+                    .append(q(agg.alias(), def.source()));
         }
-        sql.append(" FROM `").append(def.table()).append("`");
+        sql.append(" FROM ").append(qualifiedTable(def.database(), def.table(), def.source()));
         List<String> values = new ArrayList<>();
         boolean firstFilter = true;
         for (ServiceDefinition.FilterSpec f : applied) {
-            sql.append(firstFilter ? " WHERE " : " AND ").append("`")
-                    .append(f.column()).append("` ")
+            sql.append(firstFilter ? " WHERE " : " AND ").append(q(f.column(), def.source()))
+                    .append(" ")
                     .append(operatorSql(f.operator())).append(" ?");
             firstFilter = false;
             String value = params.get(f.column());
             values.add("like".equals(f.operator()) ? "%" + value + "%" : value);
         }
         sql.append(" GROUP BY ").append(def.allowedColumns().stream()
-                .map(c -> "`" + c + "`")
+                .map(c -> q(c, def.source()))
                 .reduce((a, b) -> a + ", " + b).orElseThrow());
         sql.append(" ORDER BY 1 LIMIT ").append(limit);
 
@@ -423,6 +429,22 @@ public class ServiceMarketplaceController {
         if (!IDENTIFIER.matcher(identifier).matches()) {
             throw new IllegalArgumentException("标识符不合法: " + identifier);
         }
+    }
+
+    /** W6-D 按源选标识符引号：postgres 双引号，mysql/clickhouse 反引号（CH 两者都认） */
+    private static String q(String identifier, String source) {
+        return "postgres".equals(source) ? "\"" + identifier + "\"" : "`" + identifier + "`";
+    }
+
+    /** 库.表 显式限定（标识符已过校验，引号随源方言） */
+    private static String qualifiedTable(String database, String table, String source) {
+        return q(database, source) + "." + q(table, source);
+    }
+
+    /** 聚合表达式随源选引号：SUM(`x`) / SUM("x") / COUNT(*)（白名单函数 + 校验后列名） */
+    private static String aggSqlExpr(ServiceDefinition.AggSpec agg, String source) {
+        return agg.isStar() ? agg.function() + "(*)"
+                : agg.function() + "(" + q(agg.column(), source) + ")";
     }
 
     /** 数据源不可达（池建连失败/表不存在）→ 502 */

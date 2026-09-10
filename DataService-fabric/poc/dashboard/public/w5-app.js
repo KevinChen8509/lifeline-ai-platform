@@ -496,13 +496,17 @@ function onWizardTableChange() {
   renderAggRows();
 }
 
-/** 融合从表候选：目录中除主表外的所有表 */
+/** 融合从表候选：目录中除主表外的所有表（跨源表加 ⟂ 标记，W6-D） */
 function renderJoinTableOptions(mainFqn) {
   const sel = $('#wiz-join-table');
   if (!sel) return;
+  const mainSource = mainFqn.split('.')[0];
   const candidates = state.tables.filter((t) => t.fqn !== mainFqn);
   sel.innerHTML = candidates.length
-    ? candidates.map((t) => `<option value="${esc(t.fqn)}">${esc(t.fqn)}（${esc(t.description)}）</option>`).join('')
+    ? candidates.map((t) => {
+        const cross = t.source !== mainSource ? '⟂跨源 ' : '';
+        return `<option value="${esc(t.fqn)}">${cross}${esc(t.fqn)}（${esc(t.description)}）</option>`;
+      }).join('')
     : '<option value="">（目录无其他表可融合）</option>';
   onJoinTableChange();
 }

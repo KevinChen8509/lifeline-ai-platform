@@ -44,6 +44,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "datafabric.raw-db.mysql-url=jdbc:h2:mem:w5market;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
         "datafabric.raw-db.mysql-user=sa",
         "datafabric.raw-db.mysql-password=",
+        // W6-D：postgres 池也用 H2 替身（MODE=PostgreSQL，真验证双引号方言 —— 反引号在此模式必语法错）
+        "datafabric.raw-db.postgres-url=jdbc:h2:mem:w6dpg;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
+        "datafabric.raw-db.postgres-user=sa",
+        "datafabric.raw-db.postgres-password=",
         "datafabric.security.api-key=test-api-key-fixed-for-ci",
         // W6-B：注册表持久化库指向 mem（避免测试写文件库；DB_CLOSE_DELAY 使跨用例状态与内存 Map 语义一致）
         "datafabric.registry-db.url=jdbc:h2:mem:w6bmarketreg;MODE=MySQL;DB_CLOSE_DELAY=-1",
@@ -55,8 +59,10 @@ class ServiceMarketplaceControllerTest {
     private static final String TEST_API_KEY = "test-api-key-fixed-for-ci";
     private static final String H2_URL =
             "jdbc:h2:mem:w5market;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1";
+    private static final String PG_URL =
+            "jdbc:h2:mem:w6dpg;MODE=PostgreSQL;DB_CLOSE_DELAY=-1";
 
-    /** 与 om-stub.js 同形的 customer/orders 表元数据（W6 融合） */
+    /** 与 om-stub.js 同形的 customer/orders 表元数据（W6 融合）+ W6-D 跨源从表 */
     private static List<TableMetadata> omTables() {
         return List.of(
                 new TableMetadata("mysql.customer_db.customer", "客户基础表", List.of(
@@ -69,7 +75,11 @@ class ServiceMarketplaceControllerTest {
                         new TableMetadata.Column("order_id", "订单号"),
                         new TableMetadata.Column("cust_id", "客户ID"),
                         new TableMetadata.Column("order_amount", "订单金额"),
-                        new TableMetadata.Column("order_time", "下单时间"))));
+                        new TableMetadata.Column("order_time", "下单时间"))),
+                new TableMetadata("postgres.external.risk_tags", "客户风险标签", List.of(
+                        new TableMetadata.Column("cust_id", "客户ID"),
+                        new TableMetadata.Column("risk_level", "风险等级"),
+                        new TableMetadata.Column("risk_score", "风险分"))));
     }
 
     @Autowired
@@ -82,9 +92,11 @@ class ServiceMarketplaceControllerTest {
     static void seedH2() throws Exception {
         try (Connection conn = DriverManager.getConnection(H2_URL, "sa", "");
              Statement st = conn.createStatement()) {
-            st.execute("DROP TABLE IF EXISTS customer");
+            // W6-D：FROM 显式限定 库.表 → 种子落 customer_db schema（与 FQN 中段一致）
+            st.execute("DROP SCHEMA IF EXISTS customer_db CASCADE");
+            st.execute("CREATE SCHEMA customer_db");
             st.execute("""
-                    CREATE TABLE customer (
+                    CREATE TABLE customer_db.customer (
                         cust_id       VARCHAR(16) PRIMARY KEY,
                         cust_name     VARCHAR(64),
                         phone         VARCHAR(20),
@@ -93,22 +105,37 @@ class ServiceMarketplaceControllerTest {
                         region        VARCHAR(32),
                         register_time TIMESTAMP
                     )""");
-            st.execute("INSERT INTO customer VALUES ('C0001','张伟','13800000001','110101199001011234','VIP3','北京','2026-01-15 10:30:00')");
-            st.execute("INSERT INTO customer VALUES ('C0002','王芳','13900000002','310101199202022345','VIP2','上海','2026-02-20 14:00:00')");
-            st.execute("INSERT INTO customer VALUES ('C0003','李娜','13700000003','440101199303033456','VIP1','广州','2026-03-25 09:15:00')");
+            st.execute("INSERT INTO customer_db.customer VALUES ('C0001','张伟','13800000001','110101199001011234','VIP3','北京','2026-01-15 10:30:00')");
+            st.execute("INSERT INTO customer_db.customer VALUES ('C0002','王芳','13900000002','310101199202022345','VIP2','上海','2026-02-20 14:00:00')");
+            st.execute("INSERT INTO customer_db.customer VALUES ('C0003','李娜','13700000003','440101199303033456','VIP1','广州','2026-03-25 09:15:00')");
             // W6 融合从表种子（金标：C0001=2 单 / C0002=1 / C0003=1）
-            st.execute("DROP TABLE IF EXISTS orders");
             st.execute("""
-                    CREATE TABLE orders (
+                    CREATE TABLE customer_db.orders (
                         order_id     VARCHAR(16) PRIMARY KEY,
                         cust_id      VARCHAR(16),
                         order_amount DECIMAL(12,2),
                         order_time   TIMESTAMP
                     )""");
-            st.execute("INSERT INTO orders VALUES ('O1001','C0001',1290.00,'2026-04-01 09:10:00')");
-            st.execute("INSERT INTO orders VALUES ('O1002','C0001',3380.50,'2026-04-12 20:45:00')");
-            st.execute("INSERT INTO orders VALUES ('O1003','C0002',860.00,'2026-05-03 14:20:00')");
-            st.execute("INSERT INTO orders VALUES ('O1004','C0003',2180.00,'2026-05-21 11:00:00')");
+            st.execute("INSERT INTO customer_db.orders VALUES ('O1001','C0001',1290.00,'2026-04-01 09:10:00')");
+            st.execute("INSERT INTO customer_db.orders VALUES ('O1002','C0001',3380.50,'2026-04-12 20:45:00')");
+            st.execute("INSERT INTO customer_db.orders VALUES ('O1003','C0002',860.00,'2026-05-03 14:20:00')");
+            st.execute("INSERT INTO customer_db.orders VALUES ('O1004','C0003',2180.00,'2026-05-21 11:00:00')");
+        }
+        // W6-D 跨源从表替身：PG 模式 H2 里的 external.risk_tags（金标：C0001=high/82）
+        // 全双引号建种子：不依赖 H2 模式的大小写折叠规则（PG 模式默认折叠非小写会 Schema not found）
+        try (Connection conn = DriverManager.getConnection(PG_URL, "sa", "");
+             Statement st = conn.createStatement()) {
+            st.execute("DROP SCHEMA IF EXISTS \"external\" CASCADE");
+            st.execute("CREATE SCHEMA \"external\"");
+            st.execute("""
+                    CREATE TABLE "external"."risk_tags" (
+                        "cust_id"     VARCHAR(16),
+                        "risk_level"  VARCHAR(8),
+                        "risk_score"  INT
+                    )""");
+            st.execute("INSERT INTO \"external\".\"risk_tags\" VALUES ('C0001','high',82)");
+            st.execute("INSERT INTO \"external\".\"risk_tags\" VALUES ('C0002','medium',55)");
+            st.execute("INSERT INTO \"external\".\"risk_tags\" VALUES ('C0003','low',12)");
         }
     }
 
@@ -671,5 +698,68 @@ class ServiceMarketplaceControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(mix))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ============ W6-D 跨源融合（MySQL 主表 + PostgreSQL 从表） ============
+
+    /** 跨源融合发布体：customer（MySQL）+ risk_tags（PostgreSQL），cust_id 关联 */
+    private String crossSourceFusionBody(String slug) {
+        return """
+                {
+                  "slug": "%s",
+                  "name": "客户+风险标签跨源融合",
+                  "description": "MySQL 主表 + PostgreSQL 从表（W6-D）",
+                  "fqn": "mysql.customer_db.customer",
+                  "allowedColumns": ["cust_id", "cust_name", "cust_level"],
+                  "filters": [{"column": "cust_level", "operator": "eq"}],
+                  "joins": [{
+                    "fqn": "postgres.external.risk_tags",
+                    "name": "risk_tags",
+                    "columns": ["risk_level", "risk_score"],
+                    "joinColumn": "cust_id",
+                    "parentColumn": "cust_id",
+                    "limitPerParent": 5
+                  }],
+                  "defaultLimit": 10
+                }""".formatted(slug);
+    }
+
+    @Test
+    @DisplayName("跨源金标：MySQL 主表 + PG 从表 → C0001 行嵌套 risk_tags[0].risk_level=high（引号方言被真验证）")
+    void crossSourceFusion_goldenRow() throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(crossSourceFusionBody("cust-risk-xsrc")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.service.type").value("fusion"));
+
+        // PG 替身是 MODE=PostgreSQL：若从表 SQL 沿用反引号会直接语法错（502）——金标即方言验证
+        mockMvc.perform(get("/api/v1/services/cust-risk-xsrc/query")
+                        .param("cust_level", "VIP3")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.rows[0].cust_name").value("张伟"))
+                .andExpect(jsonPath("$.rows[0].risk_tags.length()").value(1))
+                .andExpect(jsonPath("$.rows[0].risk_tags[0].risk_level").value("high"))
+                .andExpect(jsonPath("$.rows[0].risk_tags[0].risk_score").value("82"))
+                .andExpect(jsonPath("$.rows[0].risk_tags[0].cust_id").value("C0001"));
+    }
+
+    @Test
+    @DisplayName("跨源注入：payload 走参数绑定 → 0 主行 0 从行零泄露")
+    void crossSourceFusion_injectionPayload_zeroRows() throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(crossSourceFusionBody("cust-risk-xsrc-inject")))
+                .andExpect(status().isCreated());
+
+        mockMvc.perform(get("/api/v1/services/cust-risk-xsrc-inject/query")
+                        .param("cust_level", "VIP3' OR '1'='1")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0));
     }
 }
