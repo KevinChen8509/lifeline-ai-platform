@@ -7,11 +7,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -49,7 +46,6 @@ public class ServiceRegistry {
     private static final int MAX_RATE_LIMIT_PER_MIN = 600;
     private static final long MAX_TTL_HOURS = 24L * 365 * 10;
     private static final long RATE_WINDOW_MS = 60_000;
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     /** 发布请求体（fqn 为主表目录全限定名，table 取其末段；joins 非空 → fusion；aggregates 非空 → aggregate） */
     public record PublishRequest(
@@ -64,6 +60,12 @@ public class ServiceRegistry {
 
     /** 聚合列发布声明（W6-C；column 空仅 COUNT = COUNT(*)） */
     public record AggRequest(String function, String column, String alias) {}
+
+    /**
+     * 发布/轮换结果（production-audit Blocker 2）：definition 内只含 key 哈希，
+     * 明文 apiKey 仅随本对象一次性交给 controller 透出，此后系统任何位置不再持有明文。
+     */
+    public record PublishedService(ServiceDefinition definition, String apiKey) {}
 
     private final OpenMetadataClient omClient;
     private final ServiceRegistryStore store;
@@ -109,8 +111,8 @@ public class ServiceRegistry {
                     ServiceDefinition.TYPE_BUILTIN, "POST", "/api/v1/agent/raw",
                     null, null, null, List.of(), List.of(), List.of(), List.of(), 1, null, null, null));
 
-    /** 发布一个 table-query / fusion 服务（校验失败抛 IllegalArgumentException → 400） */
-    public ServiceDefinition publish(PublishRequest req) {
+    /** 发布一个 table-query / fusion / aggregate 服务（校验失败抛 IllegalArgumentException → 400）；明文 key 仅随返回值一次性透出 */
+    public PublishedService publish(PublishRequest req) {
         String slug = requireMatch(req.slug(), SLUG_PATTERN, "slug 仅允许小写字母/数字/连字符，2-63 位");
         if (isBuiltin(slug) || published.containsKey(slug)) {
             throw new IllegalArgumentException("slug 已存在: " + slug);
@@ -171,11 +173,12 @@ public class ServiceRegistry {
 
         String type = !aggregates.isEmpty() ? ServiceDefinition.TYPE_AGGREGATE
                 : joins.isEmpty() ? ServiceDefinition.TYPE_TABLE_QUERY : ServiceDefinition.TYPE_FUSION;
+        String plainKey = ServiceKeys.generate();
         ServiceDefinition def = new ServiceDefinition(slug, req.name().trim(),
                 req.description() == null ? "" : req.description().trim(),
                 type, null, null,
                 source, database, table, List.copyOf(columns), filters, joins, aggregates, defaultLimit,
-                generateApiKey(),
+                ServiceKeys.sha256Hex(plainKey),
                 new ServiceDefinition.KeyPolicy(
                         ServiceDefinition.KeyPolicy.STATUS_ACTIVE, keyExpiresAt, rateLimitPerMin),
                 Instant.now());
@@ -183,9 +186,9 @@ public class ServiceRegistry {
         store.save(def);
         log.info("服务发布: {} -> {} ({} 列 / {} 过滤参数 / {} 融合从表 / {} 聚合列 / key=sk-…{} / 限流 {}/min / 过期 {})",
                 slug, req.fqn(), columns.size(), filters.size(), joins.size(), aggregates.size(),
-                def.apiKey().substring(def.apiKey().length() - 4),
+                ServiceKeys.last4(plainKey),
                 rateLimitPerMin, keyExpiresAt == null ? "永久" : keyExpiresAt);
-        return def;
+        return new PublishedService(def, plainKey);
     }
 
     /** ttlHours 可空=永久；1..MAX_TTL_HOURS → 过期时刻；越界 400 */
@@ -403,33 +406,35 @@ public class ServiceRegistry {
         return w[1] <= limit;
     }
 
-    /** 轮换 key：重新生成 + 状态复活 ACTIVE；keyTtlHours 可空=沿用原过期时刻 */
-    public ServiceDefinition rotateKey(String slug, Long keyTtlHours) {
+    /** 轮换 key：重新生成（明文仅随返回值一次性透出）+ 状态复活 ACTIVE；keyTtlHours 可空=沿用原过期时刻 */
+    public PublishedService rotateKey(String slug, Long keyTtlHours) {
         ServiceDefinition def = requirePublished(slug);
         Instant expiresAt = def.keyPolicy() == null ? null : def.keyPolicy().expiresAt();
         if (keyTtlHours != null) {
             expiresAt = ttlToExpiry(keyTtlHours);
         }
-        return rewritePolicy(def, generateApiKey(),
+        String plainKey = ServiceKeys.generate();
+        ServiceDefinition updated = rewritePolicy(def, ServiceKeys.sha256Hex(plainKey),
                 ServiceDefinition.KeyPolicy.STATUS_ACTIVE, expiresAt);
+        return new PublishedService(updated, plainKey);
     }
 
     /** 吊销 key：立即失效（401）；rotate 可复活 */
     public ServiceDefinition revokeKey(String slug) {
         ServiceDefinition def = requirePublished(slug);
         Instant expiresAt = def.keyPolicy() == null ? null : def.keyPolicy().expiresAt();
-        return rewritePolicy(def, def.apiKey(),
+        return rewritePolicy(def, def.apiKeyHash(),
                 ServiceDefinition.KeyPolicy.STATUS_REVOKED, expiresAt);
     }
 
-    private ServiceDefinition rewritePolicy(ServiceDefinition def, String apiKey,
+    private ServiceDefinition rewritePolicy(ServiceDefinition def, String apiKeyHash,
             String status, Instant expiresAt) {
         int rateLimitPerMin = def.keyPolicy() == null
                 ? DEFAULT_RATE_LIMIT_PER_MIN : def.keyPolicy().rateLimitPerMin();
         ServiceDefinition updated = new ServiceDefinition(def.slug(), def.name(), def.description(),
                 def.type(), def.method(), def.pathTemplate(), def.source(), def.database(), def.table(),
                 def.allowedColumns(), def.filters(), def.joins(), def.aggregates(), def.defaultLimit(),
-                apiKey, new ServiceDefinition.KeyPolicy(status, expiresAt, rateLimitPerMin),
+                apiKeyHash, new ServiceDefinition.KeyPolicy(status, expiresAt, rateLimitPerMin),
                 def.createdAt());
         published.put(def.slug(), updated);
         store.save(updated);
@@ -447,7 +452,8 @@ public class ServiceRegistry {
     }
 
     /**
-     * 服务级 key 校验（恒时比较）：仅对【自助发布、key 策略可用（未吊销未过期）】的 slug 有效。
+     * 服务级 key 校验：入参先 SHA-256 再与库内哈希恒时比较（Blocker 2 —— 比较双方同为
+     * 哈希形态，明文不落任何存储）。仅对【自助发布、key 策略可用（未吊销未过期）】的 slug 有效。
      * 供 SecurityConfig 双通道使用 —— 服务 key 只能敲自己 slug 的 /query。
      */
     public boolean isValidServiceKey(String slug, String providedKey) {
@@ -455,9 +461,9 @@ public class ServiceRegistry {
             return false;
         }
         ServiceDefinition def = published.get(slug);
-        boolean keyMatches = def != null && def.apiKey() != null
-                && MessageDigest.isEqual(def.apiKey().getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                        providedKey.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        boolean keyMatches = def != null && def.apiKeyHash() != null
+                && MessageDigest.isEqual(def.apiKeyHash().getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        ServiceKeys.sha256Hex(providedKey).getBytes(java.nio.charset.StandardCharsets.UTF_8));
         if (!keyMatches) {
             return false;
         }
@@ -470,13 +476,6 @@ public class ServiceRegistry {
 
     public static int maxLimit() {
         return MAX_LIMIT;
-    }
-
-    /** sk-w6- + 32 hex 随机（发布时生成一次，注册表内存态 PoC） */
-    private static String generateApiKey() {
-        byte[] buf = new byte[16];
-        RANDOM.nextBytes(buf);
-        return "sk-w6-" + HexFormat.of().formatHex(buf);
     }
 
     private static String lastSegment(String fqn) {

@@ -68,8 +68,15 @@ public class ServiceMarketplaceController {
         this.pools = Map.of("mysql", mysqlPool, "clickhouse", clickhousePool, "postgres", postgresPool);
     }
 
-    /** 目录视图：定义 + 调用计数 */
+    /** 目录视图：定义 + 调用计数（ServiceDefinition 内 apiKeyHash 已 @JsonIgnore，不随 JSON 透出） */
     public record ServiceView(ServiceDefinition service, long callCount) {}
+
+    /**
+     * 发布/轮换响应（Blocker 2）：与目录视图同形（service + callCount），
+     * 额外携带 apiKey 明文 —— 【仅此一次】返回，调用方必须立即保存；
+     * 之后目录/详情不再包含任何 key 材料（丢失只能 rotate 重发）。
+     */
+    public record KeyedServiceView(ServiceDefinition service, long callCount, String apiKey) {}
 
     public record ServicesResponse(List<ServiceView> services) {}
 
@@ -90,10 +97,10 @@ public class ServiceMarketplaceController {
     }
 
     @PostMapping
-    public ResponseEntity<ServiceView> publish(@RequestBody ServiceRegistry.PublishRequest req) {
-        ServiceDefinition def = registry.publish(req);
+    public ResponseEntity<KeyedServiceView> publish(@RequestBody ServiceRegistry.PublishRequest req) {
+        ServiceRegistry.PublishedService pub = registry.publish(req);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(new ServiceView(def, 0));
+                .body(new KeyedServiceView(pub.definition(), 0, pub.apiKey()));
     }
 
     @GetMapping("/{slug}")
@@ -106,12 +113,13 @@ public class ServiceMarketplaceController {
     /** W6-B key 动作请求体（rotate 可选重置有效期；revoke 忽略 body） */
     public record KeyActionRequest(Long keyTtlHours) {}
 
-    /** 轮换 key：旧 key 立即失效，返回带新 key 的服务视图（全局 key 权限） */
+    /** 轮换 key：旧 key 立即失效，新 key 明文仅随本响应一次性返回（全局 key 权限） */
     @PostMapping("/{slug}/key/rotate")
-    public ServiceView rotateKey(@PathVariable String slug,
+    public KeyedServiceView rotateKey(@PathVariable String slug,
             @RequestBody(required = false) KeyActionRequest req) {
         Long ttl = req == null ? null : req.keyTtlHours();
-        return new ServiceView(registry.rotateKey(slug, ttl), registry.callCount(slug));
+        ServiceRegistry.PublishedService rotated = registry.rotateKey(slug, ttl);
+        return new KeyedServiceView(rotated.definition(), registry.callCount(slug), rotated.apiKey());
     }
 
     /** 吊销 key：立即失效（401）；rotate 可复活 */

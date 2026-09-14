@@ -267,14 +267,28 @@ class ServiceMarketplaceControllerTest {
     }
 
     @Test
-    @DisplayName("目录：builtin 6 条内置服务可见（注册表跨用例共享，条数只增不减）")
+    @DisplayName("目录：builtin 6 条内置服务可见（注册表跨用例共享，条数只增不减）；不透出任何 key 材料")
     void list_containsSixBuiltins() throws Exception {
+        publishFusion("keyless-list-check", 50);
         mockMvc.perform(get("/api/v1/services")
                         .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.services.length()",
                         org.hamcrest.Matchers.greaterThanOrEqualTo(6)))
-                .andExpect(jsonPath("$.services[?(@.service.type=='builtin')]").exists());
+                .andExpect(jsonPath("$.services[?(@.service.type=='builtin')]").exists())
+                // Blocker 2：目录面不再含明文 key，也不含哈希（@JsonIgnore）
+                .andExpect(jsonPath("$.services[?(@.apiKey)]").doesNotExist())
+                .andExpect(jsonPath("$.services[?(@.apiKeyHash)]").doesNotExist())
+                .andExpect(jsonPath("$.services[?(@.service.apiKey)]").doesNotExist())
+                .andExpect(jsonPath("$.services[?(@.service.apiKeyHash)]").doesNotExist());
+
+        // 详情面同理
+        mockMvc.perform(get("/api/v1/services/keyless-list-check")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.apiKey").doesNotExist())
+                .andExpect(jsonPath("$.service.apiKey").doesNotExist())
+                .andExpect(jsonPath("$.service.apiKeyHash").doesNotExist());
     }
 
     // ============ W6 融合 + 服务级 API Key ============
@@ -310,10 +324,13 @@ class ServiceMarketplaceControllerTest {
                         .content(fusionBody(slug, limitPerParent)))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.service.type").value("fusion"))
-                .andExpect(jsonPath("$.service.apiKey").isNotEmpty())
+                // Blocker 2：明文 key 只在发布响应顶层出现一次，service 内无 key 材料
+                .andExpect(jsonPath("$.apiKey").isNotEmpty())
+                .andExpect(jsonPath("$.service.apiKey").doesNotExist())
+                .andExpect(jsonPath("$.service.apiKeyHash").doesNotExist())
                 .andReturn();
         return MAPPER.readTree(result.getResponse().getContentAsString())
-                .path("service").path("apiKey").asText();
+                .path("apiKey").asText();
     }
 
     @Test
@@ -460,11 +477,12 @@ class ServiceMarketplaceControllerTest {
         MvcResult rotateResult = mockMvc.perform(post("/api/v1/services/rotate-e2e/key/rotate")
                         .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.service.apiKey").isNotEmpty())
+                .andExpect(jsonPath("$.apiKey").isNotEmpty())
+                .andExpect(jsonPath("$.service.apiKey").doesNotExist())
                 .andReturn();
         String newKey = MAPPER.readTree(rotateResult.getResponse().getContentAsString())
-                .path("service").path("apiKey").asText();
-        assertThat(newKey).isNotEqualTo(oldKey);
+                .path("apiKey").asText();
+        assertThat(newKey).isNotEqualTo(oldKey).startsWith("sk-w6-");
 
         mockMvc.perform(get("/api/v1/services/rotate-e2e/query")
                         .param("cust_id", "C0001")
@@ -588,7 +606,7 @@ class ServiceMarketplaceControllerTest {
                         .content(aggregateBody("orders-by-cust-golden")))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.service.type").value("aggregate"))
-                .andExpect(jsonPath("$.service.apiKey").isNotEmpty());
+                .andExpect(jsonPath("$.apiKey").isNotEmpty());
 
         mockMvc.perform(get("/api/v1/services/orders-by-cust-golden/query")
                         .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))

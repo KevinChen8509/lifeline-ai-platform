@@ -117,7 +117,7 @@ public class JdbcRegistryStore implements ServiceRegistryStore {
                 ps.setString(10, writeJson(def.joins()));
                 ps.setString(11, writeJson(def.aggregates()));
                 ps.setInt(12, def.defaultLimit());
-                ps.setString(13, def.apiKey());
+                ps.setString(13, def.apiKeyHash());
                 ps.setString(14, def.keyPolicy() == null ? "NONE" : def.keyPolicy().status());
                 ps.setTimestamp(15, def.keyPolicy() == null || def.keyPolicy().expiresAt() == null
                         ? null : Timestamp.from(def.keyPolicy().expiresAt()));
@@ -153,7 +153,7 @@ public class JdbcRegistryStore implements ServiceRegistryStore {
                 List<ServiceDefinition> out = new ArrayList<>();
                 while (rs.next()) {
                     try {
-                        out.add(fromRow(rs));
+                        out.add(fromRow(conn, rs));
                     } catch (Exception rowEx) {
                         log.error("注册表行损坏跳过: {}", rowEx.getMessage());
                     }
@@ -166,13 +166,31 @@ public class JdbcRegistryStore implements ServiceRegistryStore {
         }
     }
 
-    private static ServiceDefinition fromRow(ResultSet rs) throws SQLException {
+    /**
+     * 行 → 定义；api_key 列存哈希（Blocker 2）。
+     * 存量明文行（W6-B~W6-D 落库的 sk-w6-… 形态）自愈迁移：就地 UPDATE 为哈希 ——
+     * 原明文 key 继续有效（同一明文哈希相同），仅是从此不可再展示。
+     */
+    private ServiceDefinition fromRow(Connection conn, ResultSet rs) throws SQLException {
         Instant expiresAt = rs.getTimestamp("key_expires_at") == null
                 ? null : rs.getTimestamp("key_expires_at").toInstant();
         String status = rs.getString("key_status");
         ServiceDefinition.KeyPolicy policy = "NONE".equals(status)
                 ? null
                 : new ServiceDefinition.KeyPolicy(status, expiresAt, rs.getInt("rate_limit_per_min"));
+
+        String storedKey = rs.getString("api_key");
+        String keyHash = storedKey;
+        if (ServiceKeys.isPlaintextFormat(storedKey)) {
+            keyHash = ServiceKeys.sha256Hex(storedKey);
+            try (PreparedStatement up = conn.prepareStatement(
+                    "UPDATE `service_def` SET `api_key` = ? WHERE `slug` = ?")) {
+                up.setString(1, keyHash);
+                up.setString(2, rs.getString("slug"));
+                up.executeUpdate();
+            }
+            log.info("存量明文 key 已哈希化迁移（原 key 继续有效）: {}", rs.getString("slug"));
+        }
         return new ServiceDefinition(
                 rs.getString("slug"), rs.getString("name"), rs.getString("description"),
                 rs.getString("type"), null, null,
@@ -184,7 +202,7 @@ public class JdbcRegistryStore implements ServiceRegistryStore {
                         new TypeReference<List<ServiceDefinition.JoinSpec>>() {}),
                 readJsonList(rs.getString("aggregates"),
                         new TypeReference<List<ServiceDefinition.AggSpec>>() {}),
-                rs.getInt("default_limit"), rs.getString("api_key"), policy,
+                rs.getInt("default_limit"), keyHash, policy,
                 rs.getTimestamp("created_at").toInstant());
     }
 

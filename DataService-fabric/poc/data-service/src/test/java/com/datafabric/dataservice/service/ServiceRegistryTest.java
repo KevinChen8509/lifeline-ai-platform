@@ -65,7 +65,7 @@ class ServiceRegistryTest {
     @Test
     @DisplayName("发布：合法请求生成 table-query 定义（source/table 从 FQN 解析）")
     void publish_validRequest_createsDefinition() {
-        ServiceDefinition def = registry.publish(validRequest("vip-customers"));
+        ServiceDefinition def = registry.publish(validRequest("vip-customers")).definition();
 
         assertThat(def.slug()).isEqualTo("vip-customers");
         assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_TABLE_QUERY);
@@ -206,32 +206,35 @@ class ServiceRegistryTest {
     // ============ W6 融合发布校验 ============
 
     @Test
-    @DisplayName("融合发布：合法 joins → TYPE_FUSION + 生成服务级 apiKey（sk-w6- 前缀）")
+    @DisplayName("融合发布：合法 joins → TYPE_FUSION + 一次性明文 key（定义内存态只留哈希）")
     void publish_validFusion_createsFusionDefinitionWithKey() {
-        ServiceDefinition def = registry.publish(new ServiceRegistry.PublishRequest(
+        ServiceRegistry.PublishedService pub = registry.publish(new ServiceRegistry.PublishRequest(
                 "customer-orders-fusion", "客户订单融合", "客户+订单", "mysql.customer_db.customer",
                 List.of("cust_id", "cust_name", "cust_level"),
                 List.of(new ServiceDefinition.FilterSpec("cust_id", "eq")),
                 List.of(validJoin("orders")), null, 10, null, null));
+        ServiceDefinition def = pub.definition();
 
         assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_FUSION);
         assertThat(def.joins()).hasSize(1);
         assertThat(def.joins().get(0).name()).isEqualTo("orders");
         assertThat(def.joins().get(0).limitPerParent()).isEqualTo(50);
-        assertThat(def.apiKey()).startsWith("sk-w6-").hasSize(6 + 32);
-        assertThat(registry.isValidServiceKey("customer-orders-fusion", def.apiKey())).isTrue();
+        // Blocker 2：明文只在返回值里，定义/存储形态是 64 位哈希
+        assertThat(pub.apiKey()).startsWith("sk-w6-").hasSize(6 + 32);
+        assertThat(def.apiKeyHash()).hasSize(64).doesNotContain("sk-w6-");
+        assertThat(registry.isValidServiceKey("customer-orders-fusion", pub.apiKey())).isTrue();
         assertThat(registry.isValidServiceKey("customer-orders-fusion", "sk-w6-wrong")).isFalse();
-        assertThat(registry.isValidServiceKey("other-slug", def.apiKey())).isFalse();
-        assertThat(registry.isValidServiceKey("customer-profile", def.apiKey())).isFalse();
+        assertThat(registry.isValidServiceKey("other-slug", pub.apiKey())).isFalse();
+        assertThat(registry.isValidServiceKey("customer-profile", pub.apiKey())).isFalse();
     }
 
     @Test
-    @DisplayName("融合发布：单表（joins 空）也发 apiKey，type 仍为 table-query")
+    @DisplayName("融合发布：单表（joins 空）也发 key，type 仍为 table-query")
     void publish_tableQuery_alsoGetsApiKey() {
-        ServiceDefinition def = registry.publish(validRequest("keyed-single"));
+        ServiceRegistry.PublishedService pub = registry.publish(validRequest("keyed-single"));
 
-        assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_TABLE_QUERY);
-        assertThat(def.apiKey()).startsWith("sk-w6-");
+        assertThat(pub.definition().type()).isEqualTo(ServiceDefinition.TYPE_TABLE_QUERY);
+        assertThat(pub.apiKey()).startsWith("sk-w6-");
     }
 
     @Test
@@ -338,7 +341,7 @@ class ServiceRegistryTest {
         Instant before = Instant.now();
         ServiceDefinition def = registry.publish(new ServiceRegistry.PublishRequest(
                 "policy-service", "带策略", "", "mysql.customer_db.customer",
-                List.of("cust_id"), List.of(), null, null, 10, null, 24L));
+                List.of("cust_id"), List.of(), null, null, 10, null, 24L)).definition();
 
         assertThat(def.keyPolicy()).isNotNull();
         assertThat(def.keyPolicy().status()).isEqualTo(ServiceDefinition.KeyPolicy.STATUS_ACTIVE);
@@ -366,13 +369,13 @@ class ServiceRegistryTest {
     @Test
     @DisplayName("轮换：新 key 生效、旧 key 立即失效；builtin 404；未知 slug 404")
     void rotateKey_swapsKeyImmediately() {
-        ServiceDefinition def = registry.publish(validRequest("rotate-me"));
-        String oldKey = def.apiKey();
+        String oldKey = registry.publish(validRequest("rotate-me")).apiKey();
         assertThat(registry.isValidServiceKey("rotate-me", oldKey)).isTrue();
 
-        ServiceDefinition rotated = registry.rotateKey("rotate-me", null);
+        ServiceRegistry.PublishedService rotated = registry.rotateKey("rotate-me", null);
 
         assertThat(rotated.apiKey()).isNotEqualTo(oldKey).startsWith("sk-w6-");
+        assertThat(rotated.definition().apiKeyHash()).hasSize(64);
         assertThat(registry.isValidServiceKey("rotate-me", oldKey)).isFalse();
         assertThat(registry.isValidServiceKey("rotate-me", rotated.apiKey())).isTrue();
         assertThatThrownBy(() -> registry.rotateKey("customer-profile", null))
@@ -384,14 +387,15 @@ class ServiceRegistryTest {
     @Test
     @DisplayName("吊销：key 立即失效；rotate 可复活（新 key ACTIVE）")
     void revokeKey_invalidatesAndRotateRevives() {
-        ServiceDefinition def = registry.publish(validRequest("revoke-me"));
+        String key = registry.publish(validRequest("revoke-me")).apiKey();
 
         registry.revokeKey("revoke-me");
-        assertThat(registry.isValidServiceKey("revoke-me", def.apiKey())).isFalse();
+        assertThat(registry.isValidServiceKey("revoke-me", key)).isFalse();
         assertThat(registry.find("revoke-me")).isPresent(); // 服务本身还在
 
-        ServiceDefinition revived = registry.rotateKey("revoke-me", null);
-        assertThat(revived.keyPolicy().status()).isEqualTo(ServiceDefinition.KeyPolicy.STATUS_ACTIVE);
+        ServiceRegistry.PublishedService revived = registry.rotateKey("revoke-me", null);
+        assertThat(revived.definition().keyPolicy().status())
+                .isEqualTo(ServiceDefinition.KeyPolicy.STATUS_ACTIVE);
         assertThat(registry.isValidServiceKey("revoke-me", revived.apiKey())).isTrue();
     }
 
@@ -430,13 +434,14 @@ class ServiceRegistryTest {
     }
 
     @Test
-    @DisplayName("聚合发布：合法 aggregates → TYPE_AGGREGATE + 维度=allowedColumns + apiKey")
+    @DisplayName("聚合发布：合法 aggregates → TYPE_AGGREGATE + 维度=allowedColumns + key 哈希形态")
     void publish_validAggregates_createsAggregateDefinition() {
-        ServiceDefinition def = registry.publish(new ServiceRegistry.PublishRequest(
+        ServiceRegistry.PublishedService pub = registry.publish(new ServiceRegistry.PublishRequest(
                 "orders-by-cust", "按客户聚合订单", "", "mysql.customer_db.orders",
                 List.of("cust_id"), List.of(), null,
                 List.of(agg("COUNT", null, "order_count"), agg("SUM", "order_amount", "total_amount")),
                 10, null, null));
+        ServiceDefinition def = pub.definition();
 
         assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_AGGREGATE);
         assertThat(def.allowedColumns()).containsExactly("cust_id"); // GROUP BY 维度
@@ -444,7 +449,8 @@ class ServiceRegistryTest {
         assertThat(def.aggregates().get(0).function()).isEqualTo("COUNT");
         assertThat(def.aggregates().get(0).isStar()).isTrue();
         assertThat(def.aggregates().get(1).sqlExpr()).isEqualTo("SUM(`order_amount`)");
-        assertThat(def.apiKey()).startsWith("sk-w6-");
+        assertThat(pub.apiKey()).startsWith("sk-w6-");
+        assertThat(def.apiKeyHash()).hasSize(64);
     }
 
     @Test
@@ -526,7 +532,7 @@ class ServiceRegistryTest {
                 "agg-filter-nondim", "非维度过滤", "", "mysql.customer_db.customer",
                 List.of("cust_id"),
                 List.of(new ServiceDefinition.FilterSpec("cust_level", "eq")),
-                null, List.of(agg("COUNT", null, "cnt")), 10, null, null));
+                null, List.of(agg("COUNT", null, "cnt")), 10, null, null)).definition();
 
         assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_AGGREGATE);
         assertThat(def.filters()).hasSize(1);

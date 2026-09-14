@@ -28,6 +28,10 @@ import java.util.List;
  * 对外开放：自助发布服务携带服务级 apiKey（仅可调用自身 /query，见 SecurityConfig 双通道）。
  * W6-B 运营化：apiKey 附带 KeyPolicy（状态/过期/限流）——吊销或过期的 key 即刻失效，
  * 每服务每分钟调用上限，注册表持久化到平台 H2 文件库（重启 Key 不变）。
+ *
+ * production-audit Blocker 2：apiKeyHash 存的是 SHA-256 哈希（ServiceKeys.sha256Hex），
+ * 明文仅在发布/轮换响应里一次性返回（见 ServiceMarketplaceController.KeyedServiceView），
+ * @JsonIgnore 保证哈希不随目录/详情 JSON 透出；存量明文行由 JdbcRegistryStore 自愈迁移。
  */
 public record ServiceDefinition(
         String slug,
@@ -44,7 +48,7 @@ public record ServiceDefinition(
         List<JoinSpec> joins,
         List<AggSpec> aggregates,
         int defaultLimit,
-        String apiKey,
+        @com.fasterxml.jackson.annotation.JsonIgnore String apiKeyHash,
         KeyPolicy keyPolicy,
         Instant createdAt) {
 

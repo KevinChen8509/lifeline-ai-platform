@@ -246,3 +246,4 @@ Week 1 完成后，进入 Week 2（语义层 + 治理嵌入 + 服务层）：
 | Week 6-B | 服务运营化：注册表持久化 + Key 生命周期 + 限流计量 | `WEEK6B-RESULTS.md` |
 | Week 6-C | 分组聚合服务：聚合列 DSL（SUM/COUNT/AVG/MIN/MAX）+ AV1-AV5 验证 | `WEEK6C-RESULTS.md` |
 | Week 6-D | 跨源融合：MySQL 主表 + PostgreSQL 从表（引号方言 + 库.表限定） | `WEEK6D-RESULTS.md` |
+| Week 6-E | production-audit 复审 + B1 prod 凭据守卫 + B2 服务 Key 哈希化（一次性返回） | `WEEK6E-RESULTS.md` |

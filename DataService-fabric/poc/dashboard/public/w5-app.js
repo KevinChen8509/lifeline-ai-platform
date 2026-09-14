@@ -301,14 +301,13 @@ function renderServices() {
     const keyRow = s.keyPolicy ? `
       <div class="wiz-row" style="margin:8px 0 0;min-width:100%">
         <label style="min-width:auto;font-size:12px">服务 API Key</label>
-        <span class="key-chip">${s.apiKey ? `${esc(s.apiKey.slice(0, 10))}…${esc(s.apiKey.slice(-4))}` : '—'}</span>
+        <span class="key-chip">sk-w6-••••（仅发布/轮换时一次性返回）</span>
         ${keyStatusBadge(s.keyPolicy)}
-        <button class="ghost" data-svc-key="${esc(s.slug)}">📋 复制 Key</button>
-        <button class="ghost" data-svc-rotate="${esc(s.slug)}">🔄 轮换</button>
+        <button class="ghost" data-svc-rotate="${esc(s.slug)}">🔄 轮换并复制新 Key</button>
         <button class="ghost" data-svc-revoke="${esc(s.slug)}" ${s.keyPolicy.status === 'REVOKED' ? 'disabled' : ''}>⛔ 吊销</button>
         <button class="ghost" data-svc-usage="${esc(s.slug)}">📊 用量</button>
       </div>
-      <div style="font-size:12px;color:var(--text-dim)">限流 ${s.keyPolicy.rateLimitPerMin}/分 · Key ${s.keyPolicy.expiresAt ? `到期 ${esc(s.keyPolicy.expiresAt.replace('T', ' ').slice(0, 16))} UTC` : '永久有效'} · 仅可调本服务 /query（恒时校验）</div>` : '';
+      <div style="font-size:12px;color:var(--text-dim)">限流 ${s.keyPolicy.rateLimitPerMin}/分 · Key ${s.keyPolicy.expiresAt ? `到期 ${esc(s.keyPolicy.expiresAt.replace('T', ' ').slice(0, 16))} UTC` : '永久有效'} · 仅可调本服务 /query（恒时校验，库内只存哈希）</div>` : '';
     const typeBadge = s.type === 'fusion' ? '<span class="badge fusion">JOIN</span>' : '';
     const aggBadge = s.type === 'aggregate' ? '<span class="badge agg">AGG</span>' : '';
     return `
@@ -388,21 +387,8 @@ function bindPublishedActions() {
   document.querySelectorAll('[data-svc-curl]').forEach((btn) => {
     btn.onclick = () => {
       const slug = btn.dataset.svcCurl;
-      const found = state.services.find((s) => s.service.slug === slug)?.service;
-      const keyHint = found?.apiKey ? found.apiKey : '<your-service-key>';
-      copyCurl(`# 第三方直调：服务级 Key（仅本服务 /query 有效）\ncurl -H "X-API-Key: ${keyHint}" "http://localhost:8090/api/v1/services/${slug}/query?limit=20"`);
-    };
-  });
-  document.querySelectorAll('[data-svc-key]').forEach((btn) => {
-    btn.onclick = async () => {
-      const found = state.services.find((s) => s.service.slug === btn.dataset.svcKey)?.service;
-      if (!found?.apiKey) { toast('未取到服务 Key', false); return; }
-      try {
-        await navigator.clipboard.writeText(found.apiKey);
-        toast(`「${found.slug}」服务 Key 已复制 —— 仅可调它自己的 /query`);
-      } catch {
-        toast('复制失败 —— 请手动复制', false);
-      }
+      // Blocker 2：目录面不再回传明文 key —— curl 模板留占位符，key 从发布/轮换响应里取
+      copyCurl(`# 第三方直调：服务级 Key（仅本服务 /query 有效；key 只在发布/轮换响应里一次性返回）\ncurl -H "X-API-Key: <your-service-key>" "http://localhost:8090/api/v1/services/${slug}/query?limit=20"`);
     };
   });
   document.querySelectorAll('[data-svc-del]').forEach((btn) => {
@@ -421,7 +407,7 @@ function bindPublishedActions() {
       if (!window.confirm(`确认轮换「${slug}」的服务 Key？旧 Key 立即失效（已分发的调用方将 401）。`)) return;
       const res = await fetch(`/api/w5/services/${encodeURIComponent(slug)}/key/rotate`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
-      const newKey = data?.service?.apiKey;
+      const newKey = data?.apiKey;
       if (res.ok && newKey) {
         try {
           await navigator.clipboard.writeText(newKey);
@@ -663,11 +649,15 @@ async function publishFromWizard() {
   const data = await res.json().catch(() => ({}));
   state.wiz.busy = false;
   if (res.status === 201) {
-    const apiKey = data?.service?.apiKey;
-    status.innerHTML = `<span class="ok">✓ 已发布：GET /api/v1/services/${esc(slug)}/query</span>${apiKey ? ' <span class="key-chip">sk-w6-…已生成</span>' : ''} <button class="ghost" id="goto-verify">🧪 去验证</button>`;
+    // Blocker 2：明文 key 仅此一次随发布响应返回 —— 立刻展示 + 复制，之后任何接口不再回传
+    const apiKey = data?.apiKey;
+    status.innerHTML = `<span class="ok">✓ 已发布：GET /api/v1/services/${esc(slug)}/query</span> <button class="ghost" id="goto-verify">🧪 去验证</button>`;
     const gv = $('#goto-verify');
     if (gv) gv.onclick = () => gotoVerify(slug);
-    toast(`「${name}」发布成功${joins.length ? '（融合服务）' : aggregates.length ? '（聚合服务）' : ''} —— 服务 Key 已生成，卡片可复制，对外开放就绪`);
+    toast(apiKey
+      ? `「${name}」发布成功 —— 服务 Key（仅此一次显示）：${apiKey}，请立即保存（丢失只能轮换重发）`
+      : `「${name}」发布成功`);
+    state.lastIssuedKey = apiKey ? { slug, apiKey } : null;
     loadServices();
   } else {
     status.innerHTML = `<span class="err">✕ ${esc(data.message ?? `HTTP ${res.status}`)}</span>`;
@@ -712,7 +702,7 @@ function renderVerifyContract() {
     <div>融合从表 <code>${esc(j.name)}</code>：<span class="fqn">${esc(j.fqn)}</span> · 列 [${j.columns.map(esc).join(', ')}] · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主键 ≤${j.limitPerParent}</div>`).join('') : '';
   const aggInfo = s.type === 'aggregate' ? s.aggregates.map((a) => `
     <div>聚合列 <code>${esc(a.function)}(${esc(a.column ?? '*')})</code> → 输出别名 <code>${esc(a.alias)}</code></div>`).join('') : '';
-  const keyRow = s.apiKey ? `<div>服务 Key：<span class="key-chip">${esc(s.apiKey.slice(0, 10))}…${esc(s.apiKey.slice(-4))}</span>${keyStatusBadge(s.keyPolicy)}（仅本服务 /query 有效 —— 对外分发）</div>` : '';
+  const keyRow = s.keyPolicy ? `<div>服务 Key：<span class="key-chip">sk-w6-••••（仅发布/轮换时一次性返回）</span>${keyStatusBadge(s.keyPolicy)}（仅本服务 /query 有效 —— 库内只存哈希）</div>` : '';
   box.innerHTML = `
     <div class="card" style="margin-bottom:14px">
       <h3><span class="badge published">契约快照</span>${s.type === 'fusion' ? '<span class="badge fusion">JOIN</span>' : ''}${s.type === 'aggregate' ? '<span class="badge agg">AGG</span>' : ''}${esc(s.slug)}</h3>

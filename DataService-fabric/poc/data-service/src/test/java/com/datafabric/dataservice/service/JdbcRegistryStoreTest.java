@@ -39,6 +39,11 @@ class JdbcRegistryStoreTest {
     }
 
     private static ServiceDefinition sampleFusion(String slug) {
+        return sampleFusion(slug, ServiceKeys.sha256Hex("sk-w6-roundtrip0001"));
+    }
+
+    /** Blocker 2：apiKeyHash 参数形态即库内形态（哈希）；传明文格式值仅用于模拟存量旧行 */
+    private static ServiceDefinition sampleFusion(String slug, String apiKeyHash) {
         return new ServiceDefinition(
                 slug, "客户订单融合", "持久化往返", ServiceDefinition.TYPE_FUSION, null, null,
                 "mysql", "customer_db", "customer",
@@ -48,7 +53,7 @@ class JdbcRegistryStoreTest {
                         "mysql.customer_db.orders", "orders",
                         List.of("order_id", "order_amount"), "cust_id", "cust_id", 20)),
                 List.of(),
-                10, "sk-w6-roundtrip0001",
+                10, apiKeyHash,
                 new ServiceDefinition.KeyPolicy(
                         ServiceDefinition.KeyPolicy.STATUS_ACTIVE,
                         Instant.parse("2027-01-01T00:00:00Z"), 42),
@@ -81,7 +86,7 @@ class JdbcRegistryStoreTest {
         assertThat(join.joinColumn()).isEqualTo("cust_id");
         assertThat(join.parentColumn()).isEqualTo("cust_id");
         assertThat(join.limitPerParent()).isEqualTo(20);
-        assertThat(restored.apiKey()).isEqualTo("sk-w6-roundtrip0001");
+        assertThat(restored.apiKeyHash()).isEqualTo(ServiceKeys.sha256Hex("sk-w6-roundtrip0001"));
         assertThat(restored.keyPolicy().status()).isEqualTo(ServiceDefinition.KeyPolicy.STATUS_ACTIVE);
         assertThat(restored.keyPolicy().expiresAt()).isEqualTo(Instant.parse("2027-01-01T00:00:00Z"));
         assertThat(restored.keyPolicy().rateLimitPerMin()).isEqualTo(42);
@@ -96,7 +101,8 @@ class JdbcRegistryStoreTest {
         ServiceDefinition rotated = new ServiceDefinition(
                 "upsert-svc", "新 key 版", "", ServiceDefinition.TYPE_TABLE_QUERY, null, null,
                 "mysql", "customer_db", "customer",
-                List.of("cust_id"), List.of(), List.of(), List.of(), 10, "sk-w6-newkey0002",
+                List.of("cust_id"), List.of(), List.of(), List.of(), 10,
+                ServiceKeys.sha256Hex("sk-w6-newkey0002"),
                 new ServiceDefinition.KeyPolicy(
                         ServiceDefinition.KeyPolicy.STATUS_REVOKED, null, 60),
                 Instant.parse("2026-09-04T00:00:00Z"));
@@ -106,7 +112,7 @@ class JdbcRegistryStoreTest {
                 .filter(d -> d.slug().equals("upsert-svc")).toList();
 
         assertThat(loaded).hasSize(1);
-        assertThat(loaded.get(0).apiKey()).isEqualTo("sk-w6-newkey0002");
+        assertThat(loaded.get(0).apiKeyHash()).isEqualTo(ServiceKeys.sha256Hex("sk-w6-newkey0002"));
         assertThat(loaded.get(0).keyPolicy().status()).isEqualTo(ServiceDefinition.KeyPolicy.STATUS_REVOKED);
     }
 
@@ -152,7 +158,7 @@ class JdbcRegistryStoreTest {
                 List.of(
                         new ServiceDefinition.AggSpec("COUNT", null, "order_count"),
                         new ServiceDefinition.AggSpec("SUM", "order_amount", "total_amount")),
-                10, "sk-w6-aggtrip0003",
+                10, ServiceKeys.sha256Hex("sk-w6-aggtrip0003"),
                 new ServiceDefinition.KeyPolicy(
                         ServiceDefinition.KeyPolicy.STATUS_ACTIVE, null, 60),
                 Instant.parse("2026-09-04T00:00:00Z"));
@@ -230,5 +236,42 @@ class JdbcRegistryStoreTest {
         assertThat(agg.aggregates().get(1).sqlExpr()).isEqualTo("SUM(`order_amount`)");
         assertThat(agg.defaultLimit()).isEqualTo(10); // 错位时 JSON 曾落进 DEFAULT_LIMIT
         assertThat(agg.database()).isEqualTo("customer_db"); // W6-D：db_name 列也经 ALTER 追加在表尾
+    }
+
+    // ============ Blocker 2：key 哈希化 + 存量明文自愈迁移 ============
+
+    @Test
+    @DisplayName("明文迁移：库内 sk-w6- 明文行 → loadAll 就地 UPDATE 为哈希，原 key 继续有效，幂等")
+    void legacyPlaintextKey_isHashedOnLoad_idempotent() {
+        JdbcRegistryStore store = new JdbcRegistryStore(pool);
+        // 形态合法的明文（sk-w6- + 32 hex）—— 模拟 W6-B~W6-D 落库的旧行
+        String plaintext = "sk-w6-0123456789abcdef0123456789abcdef";
+        String expectedHash = ServiceKeys.sha256Hex(plaintext);
+        store.save(sampleFusion("legacy-plain-key", plaintext));
+
+        ServiceDefinition migrated = store.loadAll().stream()
+                .filter(d -> d.slug().equals("legacy-plain-key"))
+                .findFirst().orElseThrow();
+
+        assertThat(migrated.apiKeyHash()).isEqualTo(expectedHash).hasSize(64);
+        assertThat(migrated.apiKeyHash()).isNotEqualTo(plaintext);
+
+        // 幂等：库内已是哈希 → 再 load 不变形（哈希形态不会被误判为明文）
+        ServiceDefinition again = store.loadAll().stream()
+                .filter(d -> d.slug().equals("legacy-plain-key"))
+                .findFirst().orElseThrow();
+        assertThat(again.apiKeyHash()).isEqualTo(expectedHash);
+    }
+
+    @Test
+    @DisplayName("哈希校验闭环：明文经 ServiceKeys.sha256Hex 后与库内哈希恒等（isValidServiceKey 同路）")
+    void sha256_isStableForSamePlaintext() {
+        String plaintext = "sk-w6-abcdef0123456789abcdef0123456789";
+        assertThat(ServiceKeys.sha256Hex(plaintext)).isEqualTo(ServiceKeys.sha256Hex(plaintext));
+        assertThat(ServiceKeys.sha256Hex(plaintext)).hasSize(64);
+        assertThat(ServiceKeys.isPlaintextFormat(plaintext)).isTrue();
+        assertThat(ServiceKeys.isPlaintextFormat(ServiceKeys.sha256Hex(plaintext))).isFalse();
+        assertThat(ServiceKeys.isPlaintextFormat("sk-w6-roundtrip0001")).isFalse(); // 非 32 hex 不误判
+        assertThat(ServiceKeys.isPlaintextFormat(null)).isFalse();
     }
 }
