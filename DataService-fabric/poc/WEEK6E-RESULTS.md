@@ -17,12 +17,12 @@
 | B1 | 默认凭据随代码入库且静默放行：默认全局 key 长 44 > min-key-length 16，SecurityConfig 长度 WARN 不触发，生产忘配 env = 带仓库公开凭据上线（DB 密码 poc123/external123、Cube secret 同理） | `application.yml` / `SecurityConfig:54` | ✅ `ProdSecretGuard`（@Profile("prod")）命中 4 项哨兵值即拒绝启动，报出违规属性 + 对应环境变量 |
 | B2 | 服务 Key 明文落库 + 列表全量重复透出：`service_def.api_key` 明文存储，`GET /api/v1/services` 每次返回明文 key（发布日志有脱敏，API 面没有） | `JdbcRegistryStore:120` / `ServiceMarketplaceController:72` | ✅ 库内只存 SHA-256 哈希；明文仅发布/轮换响应一次性返回（`KeyedServiceView`）；存量明文行 loadAll 自愈迁移；`@JsonIgnore` 保证哈希不进任何 JSON |
 
-### 遗留 High-value（未修，下轮候选）
+### 遗留 High-value（2026-09-15 修复 1/2，见文末附录）
 
-1. 限流窗口按 slug 不按 Key 通道（`ServiceRegistry.tryAcquire:391`）—— 平台巡检与第三方消费者互相饿死
-2. 全局 key 比较非常时（`SecurityConfig:114` `String.equals`，服务 key 已是 `MessageDigest.isEqual`，同库两套标准）
+1. ~~限流窗口按 slug 不按 Key 通道~~ ✅ 已修（`tryAcquire(slug, channel)` 按 `slug|channel` 分窗）
+2. ~~全局 key 比较非常时~~ ✅ 已修（`SecurityConfig` 改 `MessageDigest.isEqual`，与服务 key 同标准）
 3. 限流/计量单实例内存态（多实例需 Redis）；H2 文件库无备份文档
-4. CI 最新 run 状态未复核（本机 gh CLI 缺失）；真 Docker 源跨源联验未做
+4. ~~CI 最新 run 状态未复核~~ ✅ 已闭（push 后 run #14 success，2026-09-15）；真 Docker 源跨源联验未做
 
 ### 优势（审计确认）
 
@@ -84,4 +84,38 @@
 
 - revoke 未在半 live E2E 重跑（逻辑无改动，控制器测试覆盖 401/全局照常路径）
 - 迁移后 key 的 last4 不再持久化（卡片只显掩码）—— 发布/轮换 toast 与剪贴板是唯一获取点
-- 完整 prod 部署还需：真实 MetadataClient 替身（Phase 3）+ 遗留 High-value 1/2
+- 完整 prod 部署还需：真实 MetadataClient 替身（Phase 3）+ 遗留 High-value 3（多实例限流）
+
+---
+
+## 附录：遗留 High-value 1/2 修复（2026-09-15）
+
+### HV1 限流按 Key 通道分窗
+
+- **原案**：`tryAcquire(slug)` 全局 key 与服务 key 同窗计数 —— 第三方打满 → 平台巡检（dashboard/运维）跟着 429，互相饿死
+- **修复**：`tryAcquire(slug, channel)` 窗口键 `slug|channel`；controller `query()` 从认证角色判通道
+  （`ROLE_SERVICE_KEY` → service 窗，`ROLE_API_CLIENT`/无上下文 → global 窗）；`remove()` 清两窗
+- **语义**：rateLimitPerMin 仍是服务级配置，但**每通道各享满额** —— 平台巡检与第三方互不挤占
+  （一服务一 key 的现行形态下即「按 key 限流」；未来一服务多 key 时窗口粒度随通道语义扩展）
+
+### HV2 全局 key 恒时比较
+
+- **原案**：`SecurityConfig.ApiKeyFilter` 用 `String.equals`（短路比较可计时侧信道），服务 key 已是
+  `MessageDigest.isEqual` —— 同库两套标准
+- **修复**：改 `MessageDigest.isEqual(provided, expected)`（UTF-8 字节，与服务 key 同一 API）
+
+### 验证（151/151 测试；W6-E 实跑 149 + 本次新增 2）
+
+- ServiceRegistryTest +1：global 窗 2/2 满 → service 窗独立 2/2 满（单窗单证）
+- ServiceMarketplaceControllerTest +1 E2E：rateLimit=1，global 200→429 后**服务 key 照常 200**（张伟金标）→ 服务 key 自窗 429
+- 既有 401/402/429 用例全回归（SecurityConfigTest 5/5 不变 —— HV2 行为等价，恒时性属实现属性）
+
+### 半 live E2E（H2 双源替身 + om-stub，5 步全绿）
+
+| 步骤 | 结果 |
+|------|------|
+| ① 发布 channel-window-demo（rate=2/min） | 201 + 一次性 key |
+| ② global 窗 | #1 #2 → 200；#3 → 429 |
+| ③ **service 窗不受牵连**（HV1 主张） | 服务 key #1 → 200 + C0001 张伟金标 |
+| ④ service 窗自身打满 | #2 → 200；#3 → 429 |
+| ⑤ 存量回归 | W6-D 老明文 key（库内已哈希化）→ cust-risk-xsrc-w6d 200 跨源金标（张伟 + risk_tags{high,82}）；所有 global 调用即 HV2 新比较回归 |

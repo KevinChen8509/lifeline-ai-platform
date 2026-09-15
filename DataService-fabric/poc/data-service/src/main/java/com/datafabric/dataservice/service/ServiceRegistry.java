@@ -71,7 +71,7 @@ public class ServiceRegistry {
     private final ServiceRegistryStore store;
     private final Map<String, ServiceDefinition> published = new ConcurrentHashMap<>();
     private final Map<String, AtomicLong> callCounts = new ConcurrentHashMap<>();
-    /** 固定窗口限流：slug -> [windowStart, count]（ConcurrentHashMap.compute 原子更新） */
+    /** 固定窗口限流：slug|channel -> [windowStart, count]（按 Key 通道分窗；ConcurrentHashMap.compute 原子更新） */
     private final Map<String, long[]> rateWindows = new ConcurrentHashMap<>();
 
     public ServiceRegistry(OpenMetadataClient omClient, ServiceRegistryStore store) {
@@ -367,7 +367,7 @@ public class ServiceRegistry {
             throw new ServiceNotFoundException(slug);
         }
         callCounts.remove(slug);
-        rateWindows.remove(slug);
+        rateWindows.keySet().removeIf(k -> k.startsWith(slug + "|"));
         store.delete(slug);
         log.info("服务下线: {}", slug);
     }
@@ -388,10 +388,14 @@ public class ServiceRegistry {
     }
 
     /**
-     * 固定窗口每分钟限流（作用于 /query，全局 key 与服务 key 同计数）：
+     * 固定窗口每分钟限流（作用于 /query）—— 按 Key 通道分窗（audit High-value 1）：
+     * 全局 key（平台巡检）与服务 key（第三方消费者）各自独立计数，互不饿死。
      * builtin / 无策略服务不限；窗口滑过自动归零。
      */
-    public boolean tryAcquire(String slug) {
+    public static final String CHANNEL_GLOBAL = "global";
+    public static final String CHANNEL_SERVICE = "service";
+
+    public boolean tryAcquire(String slug, String channel) {
         ServiceDefinition def = published.get(slug);
         if (def == null || def.keyPolicy() == null) {
             return true;
@@ -401,7 +405,8 @@ public class ServiceRegistry {
             return true;
         }
         long window = System.currentTimeMillis() / RATE_WINDOW_MS;
-        long[] w = rateWindows.compute(slug, (k, old) ->
+        String windowKey = slug + "|" + channel;
+        long[] w = rateWindows.compute(windowKey, (k, old) ->
                 (old == null || old[0] != window) ? new long[]{window, 1} : new long[]{window, old[1] + 1});
         return w[1] <= limit;
     }

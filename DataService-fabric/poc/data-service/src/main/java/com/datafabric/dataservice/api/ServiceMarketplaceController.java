@@ -151,7 +151,8 @@ public class ServiceMarketplaceController {
         if (ServiceDefinition.TYPE_BUILTIN.equals(def.type())) {
             throw new IllegalArgumentException("内置服务请直接调用其端点: " + def.method() + " " + def.pathTemplate());
         }
-        if (!registry.tryAcquire(slug)) {
+        if (!registry.tryAcquire(slug, isServiceKeyChannel()
+                ? ServiceRegistry.CHANNEL_SERVICE : ServiceRegistry.CHANNEL_GLOBAL)) {
             throw new RateLimitException(slug);
         }
 
@@ -467,6 +468,18 @@ public class ServiceMarketplaceController {
         public RateLimitException(String slug) {
             super("每分钟调用上限已达到: " + slug);
         }
+    }
+
+    /**
+     * 限流按 Key 通道分窗（audit High-value 1）：从认证角色判通道 ——
+     * ROLE_SERVICE_KEY（第三方服务 key）与 ROLE_API_CLIENT（全局 key，平台巡检/dashboard）
+     * 各自独立限流窗口，互不饿死。无认证上下文（如非 Web 调用）归 global 窗。
+     */
+    private static boolean isServiceKeyChannel() {
+        var auth = org.springframework.security.core.context.SecurityContextHolder
+                .getContext().getAuthentication();
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_SERVICE_KEY".equals(a.getAuthority()));
     }
 
     @ExceptionHandler(ServiceNotFoundException.class)

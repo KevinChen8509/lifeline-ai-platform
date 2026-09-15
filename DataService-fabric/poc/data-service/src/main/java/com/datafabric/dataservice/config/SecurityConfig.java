@@ -110,8 +110,11 @@ public class SecurityConfig {
             String path = req.getRequestURI();
             String provided = req.getHeader(HEADER_API_KEY);
 
-            // 通道一：全局 key 匹配 → 一律认证（即便后续 denyAll，也是"已认证但无权限"=403，更语义化）
-            if (provided != null && provided.equals(expectedKey)) {
+            // 通道一：全局 key 恒时匹配（HV2：与服务 key 同标准，MessageDigest.isEqual）
+            // → 一律认证（即便后续 denyAll，也是"已认证但无权限"=403，更语义化）
+            if (provided != null && java.security.MessageDigest.isEqual(
+                    provided.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    expectedKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))) {
                 setAuth("api-client", "ROLE_API_CLIENT");
                 chain.doFilter(req, resp);
                 return;

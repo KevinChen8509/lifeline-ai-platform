@@ -406,11 +406,29 @@ class ServiceRegistryTest {
                 "limited-svc", "限流服务", "", "mysql.customer_db.customer",
                 List.of("cust_id"), List.of(), null, null, 10, 2, null));
 
-        assertThat(registry.tryAcquire("limited-svc")).isTrue();
-        assertThat(registry.tryAcquire("limited-svc")).isTrue();
-        assertThat(registry.tryAcquire("limited-svc")).isFalse();
+        assertThat(registry.tryAcquire("limited-svc", ServiceRegistry.CHANNEL_GLOBAL)).isTrue();
+        assertThat(registry.tryAcquire("limited-svc", ServiceRegistry.CHANNEL_GLOBAL)).isTrue();
+        assertThat(registry.tryAcquire("limited-svc", ServiceRegistry.CHANNEL_GLOBAL)).isFalse();
         // builtin 无 key 策略 → 不限流
-        assertThat(registry.tryAcquire("customer-profile")).isTrue();
+        assertThat(registry.tryAcquire("customer-profile", ServiceRegistry.CHANNEL_GLOBAL)).isTrue();
+    }
+
+    @Test
+    @DisplayName("限流按 Key 通道分窗（HV1）：global 窗打满后 service 窗不受牵连，反之亦然")
+    void tryAcquire_channelWindowsAreIndependent() {
+        registry.publish(new ServiceRegistry.PublishRequest(
+                "channel-svc", "分窗服务", "", "mysql.customer_db.customer",
+                List.of("cust_id"), List.of(), null, null, 10, 2, null));
+
+        // global 窗打满（2/2 → 第 3 次拒）
+        assertThat(registry.tryAcquire("channel-svc", ServiceRegistry.CHANNEL_GLOBAL)).isTrue();
+        assertThat(registry.tryAcquire("channel-svc", ServiceRegistry.CHANNEL_GLOBAL)).isTrue();
+        assertThat(registry.tryAcquire("channel-svc", ServiceRegistry.CHANNEL_GLOBAL)).isFalse();
+
+        // service 窗独立计数：平台巡检打满不饿死第三方（audit High-value 1 原案）
+        assertThat(registry.tryAcquire("channel-svc", ServiceRegistry.CHANNEL_SERVICE)).isTrue();
+        assertThat(registry.tryAcquire("channel-svc", ServiceRegistry.CHANNEL_SERVICE)).isTrue();
+        assertThat(registry.tryAcquire("channel-svc", ServiceRegistry.CHANNEL_SERVICE)).isFalse();
     }
 
     @Test

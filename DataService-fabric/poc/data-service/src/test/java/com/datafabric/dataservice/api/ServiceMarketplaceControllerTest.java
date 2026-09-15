@@ -548,6 +548,41 @@ class ServiceMarketplaceControllerTest {
     }
 
     @Test
+    @DisplayName("限流分窗 E2E（HV1）：global 窗 429 后服务 key 照常 200 —— 通道互不饿死")
+    void rateLimit_globalWindowExhausted_serviceKeyUnaffected() throws Exception {
+        MvcResult publishResult = mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(fusionBodyWithPolicy("channel-window-e2e", 1, null)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.apiKey").isNotEmpty())
+                .andReturn();
+        String serviceKey = MAPPER.readTree(publishResult.getResponse().getContentAsString())
+                .path("apiKey").asText();
+
+        // global 窗（rateLimit=1）：第 1 次 200，第 2 次 429
+        mockMvc.perform(get("/api/v1/services/channel-window-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/services/channel-window-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isTooManyRequests());
+
+        // service 窗独立：第三方 key 不被平台巡检挤占，第 1 次照常 200；第 2 次自己窗满 429
+        mockMvc.perform(get("/api/v1/services/channel-window-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, serviceKey))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].cust_name").value("张伟"));
+        mockMvc.perform(get("/api/v1/services/channel-window-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, serviceKey))
+                .andExpect(status().isTooManyRequests());
+    }
+
+    @Test
     @DisplayName("计量 E2E：查询 2 次 → usage 总量=今日=2；未知 slug → 404；builtin rotate → 404")
     void usage_countsQueriesAnd404s() throws Exception {
         publishFusion("usage-e2e", 50);
