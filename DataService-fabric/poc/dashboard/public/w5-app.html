@@ -116,7 +116,7 @@
   <header class="page-header">
     <div>
       <h1>Week 5/6 · 数据服务市场</h1>
-      <div class="sub">数据资源目录 · 业务场景 · 自助发布参数化 API · 跨表融合定制接口 · 分组聚合服务（SUM/COUNT，W6-C）· 契约验证与服务级 Key 对外开放 · 注册表持久化 / Key 生命周期 / 限流计量（W6-B）</div>
+      <div class="sub">数据资源目录 · 业务场景 · 自助发布参数化 API · 跨表融合定制接口 · 分组聚合服务（SUM/COUNT，W6-C）· 从表聚合挂主行（W6-F）· 契约验证与服务级 Key 对外开放 · 注册表持久化 / Key 生命周期 / 限流计量（W6-B）</div>
     </div>
     <div class="links">
       <a href="/index.html">Week 1-2</a>
@@ -208,20 +208,35 @@
           <label style="min-width:auto;background:#16213a;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:13px">
             <input type="checkbox" id="wiz-join-on" style="width:auto"> 🌀 跨表融合（主行挂从表嵌套数组，如 客户 + 订单）
           </label>
-          <span style="font-size:12px;color:var(--text-dim)">发布为 fusion 服务，从表列/关联键同样逐字校验目录元数据（与聚合互斥）；从表可跨源（MySQL / ClickHouse / PostgreSQL，⟂ 标记），应用层关联合并</span>
+          <span style="font-size:12px;color:var(--text-dim)">发布为 fusion 服务，从表列/关联键同样逐字校验目录元数据（与顶层聚合互斥）；从表可跨源（MySQL / ClickHouse / PostgreSQL，⟂ 标记）应用层关联合并，也可切 📊 聚合模式让从表按关联键出指标（W6-F）</span>
         </div>
         <div class="join-block" id="wiz-join-block" style="display:none">
           <div class="wiz-row">
             <label>从表</label>
             <select id="wiz-join-table" style="min-width:300px"></select>
             <label>输出字段名</label>
-            <input id="wiz-join-name" placeholder="orders" style="width:110px" />
-            <label>每主键上限</label>
-            <input id="wiz-join-limit" type="number" value="20" min="1" max="50" style="width:70px" />
+            <input id="wiz-join-name" placeholder="orders / orders_agg" style="width:150px" />
+            <span id="wiz-join-limit-wrap" style="display:inline-flex;gap:10px;align-items:center">
+              <label>每主键上限</label>
+              <input id="wiz-join-limit" type="number" value="20" min="1" max="50" style="width:70px" />
+            </span>
           </div>
           <div class="wiz-row">
+            <label>从表模式</label>
+            <label style="min-width:auto;background:#16213a;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:13px">
+              <input type="checkbox" id="wiz-join-agg-on" style="width:auto"> 📊 聚合模式 —— 从表按关联键 GROUP BY，每主行挂 0/1 行指标（W6-F，如 每客户的订单数/订单总额）
+            </label>
+          </div>
+          <div class="wiz-row" id="wiz-join-cols-row">
             <label>从表列</label>
             <div class="check-grid" id="wiz-join-columns"></div>
+          </div>
+          <div class="join-block" id="wiz-join-agg-block" style="display:none">
+            <div id="wiz-join-agg-rows"></div>
+            <div class="wiz-row">
+              <button class="ghost" id="wiz-join-agg-add">+ 添加聚合列（≤5）</button>
+              <span style="font-size:12px;color:var(--text-dim)">列候选来自从表元数据 · 输出 = 每主行嵌套数组携带聚合别名（与行级同形状）· 别名不与主表返回列撞名</span>
+            </div>
           </div>
           <div class="wiz-row">
             <label>关联键</label>
@@ -229,7 +244,7 @@
             <span style="color:var(--green);font-size:16px">⇠</span>
             <label style="min-width:auto">主表列</label>
             <select id="wiz-parent-col" style="min-width:150px"></select>
-            <span style="font-size:12px;color:var(--text-dim)">（主表列须已勾选进返回列）</span>
+            <span style="font-size:12px;color:var(--text-dim)">（主表列须已勾选进返回列；两种模式都走关联键）</span>
           </div>
         </div>
         <div class="wiz-row">
@@ -274,7 +289,7 @@
     <section class="tab-panel" id="panel-verify">
       <div class="wizard">
         <h3>🧪 服务验证台</h3>
-        <div class="hint">发布 ≠ 交付 —— 单表服务跑 V1-V5（正常调用 · 注入防御 · 未知参数拒绝 · LIMIT 钳制 · 发布白名单闸），融合服务跑 FV1-FV7（另含关联一致性自检 + 金标用例），聚合服务跑 AV1-AV5（另含聚合数值性校验 + 别名注入双探针）。全部通过即可放心交付消费方（与 mvn 141/141 测试同一防线）。注意：服务限流过低会导致套件连跑触发 429</div>
+        <div class="hint">发布 ≠ 交付 —— 单表服务跑 V1-V5（正常调用 · 注入防御 · 未知参数拒绝 · LIMIT 钳制 · 发布白名单闸），融合服务跑 FV1-FV8（另含关联一致性自检 + 金标用例 + 聚合 join 金标与别名注入闸），聚合服务跑 AV1-AV5（另含聚合数值性校验 + 别名注入双探针）。全部通过即可放心交付消费方（与 mvn 158/158 测试同一防线）。注意：服务限流过低会导致套件连跑触发 429</div>
         <div class="wiz-row">
           <label>验证对象</label>
           <select id="verify-slug" style="min-width:340px"></select>

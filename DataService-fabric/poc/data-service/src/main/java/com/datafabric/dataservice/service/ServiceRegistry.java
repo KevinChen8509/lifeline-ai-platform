@@ -54,9 +54,10 @@ public class ServiceRegistry {
             List<JoinRequest> joins, List<AggRequest> aggregates, Integer defaultLimit,
             Integer rateLimitPerMin, Long keyTtlHours) {}
 
-    /** 融合从表发布声明 */
+    /** 融合从表发布声明（W6-F：columns 行级 与 aggregates 聚合 二选一） */
     public record JoinRequest(String fqn, String name, List<String> columns,
-                              String joinColumn, String parentColumn, Integer limitPerParent) {}
+                              String joinColumn, String parentColumn, Integer limitPerParent,
+                              List<AggRequest> aggregates) {}
 
     /** 聚合列发布声明（W6-C；column 空仅 COUNT = COUNT(*)） */
     public record AggRequest(String function, String column, String alias) {}
@@ -234,15 +235,24 @@ public class ServiceRegistry {
             if (joinMeta.isEmpty()) {
                 throw new IllegalArgumentException("从表目录元数据不可用或不存在: " + j.fqn());
             }
+            // W6-F：columns（行级）与 aggregates（按关联键聚合）二选一
             List<String> joinColumns = j.columns() == null ? List.of() : j.columns();
-            if (joinColumns.isEmpty()) {
-                throw new IllegalArgumentException("join " + joinName + " 的 columns 至少选择一列");
+            List<AggRequest> joinAggs = j.aggregates() == null ? List.of() : j.aggregates();
+            if (!joinColumns.isEmpty() == !joinAggs.isEmpty()) {
+                throw new IllegalArgumentException("join " + joinName
+                        + " 的 columns 与 aggregates 必须二选一（行级从行 或 按关联键聚合）");
             }
-            for (String col : joinColumns) {
-                requireMatch(col, IDENTIFIER_PATTERN, "从表列名不合法: " + col);
-                if (!joinMeta.contains(col)) {
-                    throw new IllegalArgumentException("从表列 " + col + " 不在目录表 " + j.fqn() + " 的元数据中");
+            List<ServiceDefinition.AggSpec> aggSpecs = List.of();
+            if (!joinColumns.isEmpty()) {
+                for (String col : joinColumns) {
+                    requireMatch(col, IDENTIFIER_PATTERN, "从表列名不合法: " + col);
+                    if (!joinMeta.contains(col)) {
+                        throw new IllegalArgumentException("从表列 " + col + " 不在目录表 " + j.fqn() + " 的元数据中");
+                    }
                 }
+            } else {
+                // 聚合列对照【从表】元数据校验（W6-C 同一校验链）；alias 不与主表输出列撞名
+                aggSpecs = normalizeAggregates(joinAggs, joinMeta, mainColumns);
             }
             String joinColumn = requireMatch(j.joinColumn(), IDENTIFIER_PATTERN,
                     "joinColumn 不合法: " + j.joinColumn());
@@ -255,11 +265,12 @@ public class ServiceRegistry {
                 throw new IllegalArgumentException("parentColumn " + parentColumn + " 必须同时在主表 allowedColumns 中");
             }
             int perParent = j.limitPerParent() == null ? 20 : j.limitPerParent();
-            if (perParent < 1 || perParent > MAX_PER_PARENT) {
+            if (aggSpecs.isEmpty() && (perParent < 1 || perParent > MAX_PER_PARENT)) {
+                // 聚合模式每主键至多 1 行（GROUP BY 保证），limitPerParent 无意义 → 不校验
                 throw new IllegalArgumentException("limitPerParent 必须在 1-" + MAX_PER_PARENT + " 之间");
             }
             out.add(new ServiceDefinition.JoinSpec(j.fqn(), joinName, List.copyOf(joinColumns),
-                    joinColumn, parentColumn, perParent));
+                    joinColumn, parentColumn, perParent, aggSpecs));
         }
         return List.copyOf(out);
     }
@@ -288,7 +299,8 @@ public class ServiceRegistry {
             }
             String alias = requireMatch(a.alias(), IDENTIFIER_PATTERN, "聚合别名不合法: " + a.alias());
             if (aliases.contains(alias) || dims.contains(alias)) {
-                throw new IllegalArgumentException("聚合别名重复或与分组维度撞名: " + alias);
+                // dims：aggregate 主形态 = 分组维度；W6-F join 聚合 = 主表输出列（挂嵌套键下，防歧义）
+                throw new IllegalArgumentException("聚合别名重复或与既有输出列撞名: " + alias);
             }
             aliases.add(alias);
             String column = a.column() == null ? null : a.column().trim();

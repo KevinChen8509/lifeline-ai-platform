@@ -815,4 +815,119 @@ class ServiceMarketplaceControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(0));
     }
+
+    // ============ W6-F 聚合 join（从表按关联键聚合挂主行） ============
+
+    /** 聚合 join 发布体：customer 主表 + orders 聚合 join（COUNT(*) + SUM(order_amount)，无行级列） */
+    private String aggJoinFusionBody(String slug) {
+        return """
+                {
+                  "slug": "%s",
+                  "name": "客户+订单聚合",
+                  "description": "W6-F join 聚合",
+                  "fqn": "mysql.customer_db.customer",
+                  "allowedColumns": ["cust_id", "cust_name", "cust_level"],
+                  "filters": [{"column": "cust_level", "operator": "eq"}],
+                  "joins": [{
+                    "fqn": "mysql.customer_db.orders",
+                    "name": "orders_agg",
+                    "columns": [],
+                    "joinColumn": "cust_id",
+                    "parentColumn": "cust_id",
+                    "aggregates": [
+                      {"function": "COUNT", "column": null, "alias": "order_count"},
+                      {"function": "SUM", "column": "order_amount", "alias": "total_amount"}
+                    ]
+                  }],
+                  "defaultLimit": 10
+                }""".formatted(slug);
+    }
+
+    @Test
+    @DisplayName("聚合 join 金标：query VIP3 → 张伟 + orders_agg[0]{order_count:2, total_amount:4670.50}")
+    void aggJoinFusion_goldenRow() throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(aggJoinFusionBody("cust-orders-aggjoin-e2e")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.service.type").value("fusion"));
+
+        mockMvc.perform(get("/api/v1/services/cust-orders-aggjoin-e2e/query")
+                        .param("cust_level", "VIP3")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.rows[0].cust_name").value("张伟"))
+                // 聚合 join 仍挂 0/1 元素嵌套数组（与行级同形状）
+                .andExpect(jsonPath("$.rows[0].orders_agg.length()").value(1))
+                .andExpect(jsonPath("$.rows[0].orders_agg[0].order_count").value("2"))
+                .andExpect(jsonPath("$.rows[0].orders_agg[0].total_amount").value("4670.50"))
+                // 关联键照常透出（关联一致性自检依赖）
+                .andExpect(jsonPath("$.rows[0].orders_agg[0].cust_id").value("C0001"))
+                // JoinView 透出聚合别名（前端表头按列名数组渲染）
+                .andExpect(jsonPath("$.joins[0].name").value("orders_agg"))
+                .andExpect(jsonPath("$.joins[0].columns[0]").value("order_count"))
+                .andExpect(jsonPath("$.joins[0].columns[1]").value("total_amount"));
+    }
+
+    @Test
+    @DisplayName("聚合 join 跨源金标：PG 从表 SUM(risk_score) → C0001 risk_sum[0].sum_score=82（方言被真验证）")
+    void aggJoinFusion_crossSourceGoldenRow() throws Exception {
+        String body = """
+                {
+                  "slug": "cust-risk-aggsum-e2e",
+                  "name": "客户+风险分聚合",
+                  "description": "W6-F 跨源聚合 join",
+                  "fqn": "mysql.customer_db.customer",
+                  "allowedColumns": ["cust_id", "cust_name"],
+                  "filters": [{"column": "cust_id", "operator": "eq"}],
+                  "joins": [{
+                    "fqn": "postgres.external.risk_tags",
+                    "name": "risk_sum",
+                    "columns": [],
+                    "joinColumn": "cust_id",
+                    "parentColumn": "cust_id",
+                    "aggregates": [
+                      {"function": "MAX", "column": "risk_score", "alias": "max_score"}
+                    ]
+                  }],
+                  "defaultLimit": 10
+                }""";
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isCreated());
+
+        // PG 替身 MODE=PostgreSQL：聚合表达式若沿用反引号会语法错（502）——金标即方言验证
+        mockMvc.perform(get("/api/v1/services/cust-risk-aggsum-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rows[0].cust_name").value("张伟"))
+                .andExpect(jsonPath("$.rows[0].risk_sum.length()").value(1))
+                .andExpect(jsonPath("$.rows[0].risk_sum[0].max_score").value("82"))
+                .andExpect(jsonPath("$.rows[0].risk_sum[0].cust_id").value("C0001"));
+    }
+
+    @Test
+    @DisplayName("聚合 join 注入：主表过滤 payload 走参数绑定 → total=0；无主行即无从表聚合")
+    void aggJoinFusion_injectionPayload_zeroRows() throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(aggJoinFusionBody("cust-orders-aggjoin-inject")))
+                .andExpect(status().isCreated());
+
+        MvcResult result = mockMvc.perform(get("/api/v1/services/cust-orders-aggjoin-inject/query")
+                        .param("cust_level", "VIP3' OR '1'='1")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsString())
+                .contains("\"total\":0")
+                .doesNotContain("张伟").doesNotContain("4670.50");
+    }
 }

@@ -59,7 +59,7 @@ class ServiceRegistryTest {
         return new ServiceRegistry.JoinRequest(
                 "mysql.customer_db.orders", name,
                 List.of("order_id", "order_amount"),
-                "cust_id", "cust_id", 50);
+                "cust_id", "cust_id", 50, null);
     }
 
     @Test
@@ -243,7 +243,7 @@ class ServiceRegistryTest {
         ServiceRegistry.JoinRequest evil = new ServiceRegistry.JoinRequest(
                 "mysql.customer_db.orders", "orders",
                 List.of("order_id", "cust_id; DROP TABLE orders"),
-                "cust_id", "cust_id", 50);
+                "cust_id", "cust_id", 50, null);
 
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "evil-join", "注入尝试", "", "mysql.customer_db.customer",
@@ -257,7 +257,7 @@ class ServiceRegistryTest {
     void publish_joinJoinColumnNotInMetadata_rejected() {
         ServiceRegistry.JoinRequest bad = new ServiceRegistry.JoinRequest(
                 "mysql.customer_db.orders", "orders",
-                List.of("order_id"), "evil_col", "cust_id", 50);
+                List.of("order_id"), "evil_col", "cust_id", 50, null);
 
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "bad-joincol", "坏关联键", "", "mysql.customer_db.customer",
@@ -271,7 +271,7 @@ class ServiceRegistryTest {
     void publish_parentColumnNotInMainColumns_rejected() {
         ServiceRegistry.JoinRequest bad = new ServiceRegistry.JoinRequest(
                 "mysql.customer_db.orders", "orders",
-                List.of("order_id"), "cust_id", "phone", 50);
+                List.of("order_id"), "cust_id", "phone", 50, null);
 
         assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
                 "bad-parent", "坏主表键", "", "mysql.customer_db.customer",
@@ -306,7 +306,7 @@ class ServiceRegistryTest {
                 List.of("cust_id"), List.of(),
                 List.of(new ServiceRegistry.JoinRequest(
                         "mysql.customer_db.orders", "orders",
-                        List.of("order_id"), "cust_id", "cust_id", 999)), null, 10, null, null)))
+                        List.of("order_id"), "cust_id", "cust_id", 999, null)), null, 10, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("limitPerParent");
 
@@ -316,6 +316,91 @@ class ServiceRegistryTest {
                 List.of("cust_id"), List.of(), List.of(validJoin("orders")), null, 10, null, null)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("从表目录元数据不可用");
+    }
+
+    // ============ W6-F 聚合 join（从表按关联键聚合挂主行） ============
+
+    private static ServiceRegistry.JoinRequest aggJoin(String name, String alias, String column) {
+        return new ServiceRegistry.JoinRequest(
+                "mysql.customer_db.orders", name,
+                List.of(), "cust_id", "cust_id", null,
+                List.of(new ServiceRegistry.AggRequest("COUNT", null, "order_count"),
+                        new ServiceRegistry.AggRequest("SUM", column, alias)));
+    }
+
+    @Test
+    @DisplayName("聚合 join 发布：columns 空 + aggregates 声明 → fusion + 聚合列表入定义")
+    void publish_validAggJoin_createsFusionWithJoinAggregates() {
+        ServiceDefinition def = registry.publish(new ServiceRegistry.PublishRequest(
+                "customer-orders-aggjoin", "客户+订单聚合", "", "mysql.customer_db.customer",
+                List.of("cust_id", "cust_name", "cust_level"),
+                List.of(new ServiceDefinition.FilterSpec("cust_level", "eq")),
+                List.of(aggJoin("orders_agg", "total_amount", "order_amount")),
+                null, 10, null, null)).definition();
+
+        assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_FUSION);
+        assertThat(def.joins()).hasSize(1);
+        ServiceDefinition.JoinSpec join = def.joins().get(0);
+        assertThat(join.name()).isEqualTo("orders_agg");
+        assertThat(join.columns()).isEmpty();          // 聚合模式不带行级列
+        assertThat(join.aggregates()).hasSize(2);      // W6-F：聚合声明入定义
+        assertThat(join.aggregates().get(0).sqlExpr()).isEqualTo("COUNT(*)");
+        assertThat(join.aggregates().get(1).sqlExpr()).isEqualTo("SUM(`order_amount`)");
+    }
+
+    @Test
+    @DisplayName("聚合 join XOR：columns 与 aggregates 双非空 / 双空 → 拒绝")
+    void publish_joinColumnsAggregatesXor_rejected() {
+        // 双非空：行级与聚合混挂同一从表
+        ServiceRegistry.JoinRequest both = new ServiceRegistry.JoinRequest(
+                "mysql.customer_db.orders", "orders",
+                List.of("order_id"), "cust_id", "cust_id", 50,
+                List.of(new ServiceRegistry.AggRequest("COUNT", null, "cnt")));
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "join-xor-both", "双非空", "", "mysql.customer_db.customer",
+                List.of("cust_id"), List.of(), List.of(both), null, 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("二选一");
+
+        // 双空：从表必须带回点什么
+        ServiceRegistry.JoinRequest neither = new ServiceRegistry.JoinRequest(
+                "mysql.customer_db.orders", "orders",
+                List.of(), "cust_id", "cust_id", 50, List.of());
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "join-xor-none", "双空", "", "mysql.customer_db.customer",
+                List.of("cust_id"), List.of(), List.of(neither), null, 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("二选一");
+    }
+
+    @Test
+    @DisplayName("聚合 join 校验：alias 撞主表列 / alias 注入 / 聚合列不在从表元数据 → 拒绝")
+    void publish_aggJoinAliasAndColumnRules_rejected() {
+        // alias 撞主表 allowedColumns（cust_id）→ 挂载歧义
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-join-alias-main", "撞主表列", "", "mysql.customer_db.customer",
+                List.of("cust_id", "cust_name"), List.of(),
+                List.of(aggJoin("orders_agg", "cust_id", "order_amount")), null, 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("撞名");
+
+        // alias 注入 payload
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-join-alias-evil", "注入别名", "", "mysql.customer_db.customer",
+                List.of("cust_id"), List.of(),
+                List.of(aggJoin("orders_agg", "total; DROP TABLE orders", "order_amount")),
+                null, 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("别名不合法");
+
+        // 聚合列不在【从表】元数据（对照的是 orders 不是主表 customer）
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "agg-join-col-unknown", "未知聚合列", "", "mysql.customer_db.customer",
+                List.of("cust_id"), List.of(),
+                List.of(aggJoin("orders_agg", "total_amount", "phone")), // phone 是主表列不是从表列
+                null, 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不在目录表元数据");
     }
 
     // ============ W6-B key 生命周期 / 限流 / 计量 / 持久化 ============

@@ -83,7 +83,8 @@ public class ServiceMarketplaceController {
     public record QueryResponse(String slug, List<String> columns, List<Map<String, String>> rows,
                                 int total, long elapsedMs) {}
 
-    /** 融合响应：主行平铺主表列，每个 join.name 挂嵌套从行数组（从行额外透出 joinColumn 供关联自检） */
+    /** 融合响应：主行平铺主表列，每个 join.name 挂嵌套从行数组（从行额外透出 joinColumn 供关联自检；
+     *  W6-F 聚合 join 的 columns 字段透出聚合别名） */
     public record JoinView(String name, List<String> columns) {}
 
     public record FusionQueryResponse(String slug, List<String> columns, List<JoinView> joins,
@@ -186,7 +187,11 @@ public class ServiceMarketplaceController {
                     def.joins().stream().map(j -> j.fqn().substring(0, j.fqn().indexOf('.')).toLowerCase(java.util.Locale.ROOT)).toList(),
                     params.size(), rows.size(), def.joins().size(), limit, elapsed);
             return new FusionQueryResponse(slug, def.allowedColumns(),
-                    def.joins().stream().map(j -> new JoinView(j.name(), j.columns())).toList(),
+                    def.joins().stream().map(j -> new JoinView(j.name(),
+                            // W6-F：聚合 join 透出聚合别名（行级透出从表列）—— 前端按列名数组渲染表头
+                            j.aggregates().isEmpty() ? j.columns()
+                                    : j.aggregates().stream().map(ServiceDefinition.AggSpec::alias).toList()))
+                            .toList(),
                     rows, rows.size(), elapsed);
         }
         serviceCallLog.info("{\"slug\":\"{}\",\"source\":\"{}\",\"table\":\"{}\",\"filters\":{},\"rows\":{},\"limit\":{},\"elapsedMs\":{}}",
@@ -197,12 +202,21 @@ public class ServiceMarketplaceController {
     /**
      * 融合从表执行：按主行 parentColumn 值批量取从行（IN 全值绑定），
      * 分组挂到主行 join.name 上，每组截断 limitPerParent。就地写入 rows。
+     * W6-F 聚合 join：SELECT joinColumn + 聚合别名 GROUP BY joinColumn ——
+     * 每主键至多 1 行，仍以 0/1 元素嵌套数组挂载（与行级同形状，前端/FV6 零改动）。
      */
     private void attachJoins(ServiceDefinition def, List<Map<String, Object>> rows) {
         for (ServiceDefinition.JoinSpec join : def.joins()) {
             // 第二道闸：从表标识符执行期复检
             for (String col : join.columns()) {
                 checkIdentifier(col);
+            }
+            for (ServiceDefinition.AggSpec agg : join.aggregates()) {
+                checkIdentifier(agg.function());
+                checkIdentifier(agg.alias());
+                if (!agg.isStar()) {
+                    checkIdentifier(agg.column());
+                }
             }
             checkIdentifier(join.joinColumn());
             String joinSource = join.fqn().substring(0, join.fqn().indexOf('.')).toLowerCase(java.util.Locale.ROOT);
@@ -224,21 +238,38 @@ public class ServiceMarketplaceController {
                 continue;
             }
 
+            boolean aggMode = !join.aggregates().isEmpty();
             StringBuilder sql = new StringBuilder("SELECT ");
-            List<String> selectCols = new ArrayList<>(join.columns());
-            selectCols.add(join.joinColumn());
-            sql.append(selectCols.stream().map(c -> q(c, joinSource))
-                    .reduce((a, b) -> a + ", " + b).orElseThrow());
+            if (aggMode) {
+                sql.append(q(join.joinColumn(), joinSource));
+                for (ServiceDefinition.AggSpec agg : join.aggregates()) {
+                    sql.append(", ").append(aggSqlExpr(agg, joinSource))
+                            .append(" AS ").append(q(agg.alias(), joinSource));
+                }
+            } else {
+                List<String> selectCols = new ArrayList<>(join.columns());
+                selectCols.add(join.joinColumn());
+                sql.append(selectCols.stream().map(c -> q(c, joinSource))
+                        .reduce((a, b) -> a + ", " + b).orElseThrow());
+            }
             String joinDatabase = join.fqn().substring(join.fqn().indexOf('.') + 1,
                     join.fqn().lastIndexOf('.'));
             checkIdentifier(joinDatabase);
             sql.append(" FROM ").append(qualifiedTable(joinDatabase, joinTable, joinSource))
                     .append(" WHERE ").append(q(join.joinColumn(), joinSource)).append(" IN (");
             sql.append("?, ".repeat(parentValues.size() - 1)).append("?)");
-            sql.append(" LIMIT ").append((long) join.limitPerParent() * parentValues.size());
+            if (aggMode) {
+                // GROUP BY joinColumn → 每父键 ≤1 行，无需 LIMIT
+                sql.append(" GROUP BY ").append(q(join.joinColumn(), joinSource));
+            } else {
+                sql.append(" LIMIT ").append((long) join.limitPerParent() * parentValues.size());
+            }
 
             Map<String, List<Map<String, String>>> grouped = new LinkedHashMap<>();
             HikariDataSource pool = pools.get(joinSource);
+            List<String> outCols = aggMode
+                    ? join.aggregates().stream().map(ServiceDefinition.AggSpec::alias).toList()
+                    : join.columns();
             try (Connection conn = pool.getConnection();
                  PreparedStatement ps = conn.prepareStatement(sql.toString())) {
                 int i = 1;
@@ -248,7 +279,7 @@ public class ServiceMarketplaceController {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         Map<String, String> row = new LinkedHashMap<>();
-                        for (String col : join.columns()) {
+                        for (String col : outCols) {
                             row.put(col, rs.getString(col));
                         }
                         // 关联键透出到从行：消费方与 FV6 关联一致性自检依赖它
@@ -263,7 +294,7 @@ public class ServiceMarketplaceController {
                 throw new SourceUnavailableException(joinSource, e);
             }
 
-            // 挂载：每组截断 limitPerParent
+            // 挂载：行级每组截断 limitPerParent；聚合 0/1 元素（GROUP BY 已保证）
             for (Map<String, Object> mainRow : rows) {
                 Object key = mainRow.get(join.parentColumn());
                 List<Map<String, String>> children = key == null

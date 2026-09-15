@@ -77,13 +77,21 @@ public record ServiceDefinition(
      * 融合从表声明（受限 DSL，不开放任意 SQL）：
      *   fqn            从表目录全限定名（列/joinColumn 须逐字命中其 OM 元数据）
      *   name           输出字段名（主行上的嵌套数组键，标识符正则）
-     *   columns        从表返回列白名单
+     *   columns        从表返回列白名单（行级模式）
      *   joinColumn     从表关联列（如 orders.cust_id）
      *   parentColumn   主表关联列（须 ∈ 主表 allowedColumns，如 customer.cust_id）
-     *   limitPerParent 每个主行的从行数上限（1..50）
+     *   limitPerParent 每个主行的从行数上限（1..50；聚合模式无意义，不参与执行）
+     *   aggregates     从表聚合声明（W6-F 聚合模式）：按 joinColumn GROUP BY，
+     *                  每个主键至多 1 行聚合结果挂回主行 —— columns 与 aggregates 二选一（XOR）
      */
     public record JoinSpec(String fqn, String name, List<String> columns,
-                           String joinColumn, String parentColumn, int limitPerParent) {}
+                           String joinColumn, String parentColumn, int limitPerParent,
+                           List<AggSpec> aggregates) {
+        public JoinSpec {
+            columns = columns == null ? List.of() : columns;           // 旧持久化 JSON 无 aggregates → 行级语义不变
+            aggregates = aggregates == null ? List.of() : aggregates;
+        }
+    }
 
     /**
      * 聚合列声明（W6-C 受限 DSL，与 joins 互斥）：

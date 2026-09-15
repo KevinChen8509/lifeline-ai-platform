@@ -51,7 +51,8 @@ class JdbcRegistryStoreTest {
                 List.of(new ServiceDefinition.FilterSpec("cust_id", "eq")),
                 List.of(new ServiceDefinition.JoinSpec(
                         "mysql.customer_db.orders", "orders",
-                        List.of("order_id", "order_amount"), "cust_id", "cust_id", 20)),
+                        List.of("order_id", "order_amount"), "cust_id", "cust_id", 20,
+                        List.of())),
                 List.of(),
                 10, apiKeyHash,
                 new ServiceDefinition.KeyPolicy(
@@ -236,6 +237,76 @@ class JdbcRegistryStoreTest {
         assertThat(agg.aggregates().get(1).sqlExpr()).isEqualTo("SUM(`order_amount`)");
         assertThat(agg.defaultLimit()).isEqualTo(10); // 错位时 JSON 曾落进 DEFAULT_LIMIT
         assertThat(agg.database()).isEqualTo("customer_db"); // W6-D：db_name 列也经 ALTER 追加在表尾
+    }
+
+    // ============ W6-F 聚合 join 持久化 ============
+
+    /** 主表 + 聚合 join（无 columns）的 fusion 定义 —— W6-F 新形态 */
+    private static ServiceDefinition sampleAggJoinFusion(String slug) {
+        return new ServiceDefinition(
+                slug, "客户+订单聚合", "W6-F 往返", ServiceDefinition.TYPE_FUSION, null, null,
+                "mysql", "customer_db", "customer",
+                List.of("cust_id", "cust_name"),
+                List.of(new ServiceDefinition.FilterSpec("cust_level", "eq")),
+                List.of(new ServiceDefinition.JoinSpec(
+                        "mysql.customer_db.orders", "orders_agg",
+                        List.of(), "cust_id", "cust_id", 20,
+                        List.of(
+                                new ServiceDefinition.AggSpec("COUNT", null, "order_count"),
+                                new ServiceDefinition.AggSpec("SUM", "order_amount", "total_amount")))),
+                List.of(),
+                10, ServiceKeys.sha256Hex("sk-w6-aggjoin0005"),
+                new ServiceDefinition.KeyPolicy(
+                        ServiceDefinition.KeyPolicy.STATUS_ACTIVE, null, 60),
+                Instant.parse("2026-09-04T00:00:00Z"));
+    }
+
+    @Test
+    @DisplayName("聚合 join 往返：save → loadAll aggregates 逐字保留（columns 空 + agg 列表完整）")
+    void aggJoinRoundTrip_preservesJoinAggregates() {
+        JdbcRegistryStore store = new JdbcRegistryStore(pool);
+        store.save(sampleAggJoinFusion("roundtrip-agg-join"));
+
+        ServiceDefinition restored = store.loadAll().stream()
+                .filter(d -> d.slug().equals("roundtrip-agg-join"))
+                .findFirst().orElseThrow();
+
+        assertThat(restored.type()).isEqualTo(ServiceDefinition.TYPE_FUSION);
+        assertThat(restored.joins()).hasSize(1);
+        ServiceDefinition.JoinSpec join = restored.joins().get(0);
+        assertThat(join.name()).isEqualTo("orders_agg");
+        assertThat(join.columns()).isEmpty(); // 聚合模式不带行级列
+        assertThat(join.aggregates()).hasSize(2);
+        assertThat(join.aggregates().get(0).sqlExpr()).isEqualTo("COUNT(*)");
+        assertThat(join.aggregates().get(1).sqlExpr()).isEqualTo("SUM(`order_amount`)");
+        assertThat(join.aggregates().get(1).alias()).isEqualTo("total_amount");
+    }
+
+    @Test
+    @DisplayName("旧 JSON 兼容：行级 join（无 aggregates 字段）反序列化 → 空聚合列表，行级语义不变")
+    void legacyRowLevelJoin_deserializesWithEmptyAggregates() {
+        JdbcRegistryStore store = new JdbcRegistryStore(pool);
+        // W6-D 时代的行级 join JSON（无 aggregates 键）—— 直接落库模拟存量行
+        ServiceDefinition legacy = new ServiceDefinition(
+                "legacy-rowlevel-w6d", "旧行级融合", "", ServiceDefinition.TYPE_FUSION, null, null,
+                "mysql", "customer_db", "customer",
+                List.of("cust_id"), List.of(),
+                List.of(new ServiceDefinition.JoinSpec(
+                        "postgres.external.risk_tags", "risk_tags",
+                        List.of("risk_level", "risk_score"), "cust_id", "cust_id", 5, null)),
+                List.of(), 10,
+                ServiceKeys.sha256Hex("sk-w6-legacyrow06"),
+                new ServiceDefinition.KeyPolicy(
+                        ServiceDefinition.KeyPolicy.STATUS_ACTIVE, null, 60),
+                Instant.parse("2026-09-10T00:00:00Z"));
+        store.save(legacy);
+
+        // save 用新代码序列化会带 aggregates:[] —— 再验证 Jackson 裸反序列化旧形态 JSON
+        ServiceDefinition restored = store.loadAll().stream()
+                .filter(d -> d.slug().equals("legacy-rowlevel-w6d"))
+                .findFirst().orElseThrow();
+        assertThat(restored.joins().get(0).aggregates()).isEmpty(); // 空/缺省 → List.of()，行级不受影响
+        assertThat(restored.joins().get(0).columns()).containsExactly("risk_level", "risk_score");
     }
 
     // ============ Blocker 2：key 哈希化 + 存量明文自愈迁移 ============

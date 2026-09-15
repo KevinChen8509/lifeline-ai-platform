@@ -8,7 +8,7 @@ const state = {
   services: [],
   domainFilter: '全部',
   search: '',
-  wiz: { filters: [], join: { on: false }, agg: { on: false, rows: [] }, busy: false },
+  wiz: { filters: [], join: { on: false }, joinAgg: { on: false, rows: [] }, agg: { on: false, rows: [] }, busy: false },
   verify: { slug: '', running: false },
 };
 
@@ -294,8 +294,9 @@ function renderServices() {
   $('#published-grid').innerHTML = published.map(({ service: s, callCount }) => {
     const filterInputs = s.filters.map((f) => `
       <label style="font-size:12px;color:var(--text-dim)">${esc(f.column)} (${esc(f.operator)})<input data-svc-param="${esc(f.column)}" style="width:120px;margin-left:6px" placeholder="如 ${esc(defaultHint(s.table, f.column))}"></label>`).join('');
-    const joinInfo = s.type === 'fusion' ? s.joins.map((j) => `
-        <div>融合从表：<span class="fqn">${esc(j.fqn)}</span> → 嵌套字段 <code>${esc(j.name)}</code>（${j.columns.length} 列 · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主键 ≤${j.limitPerParent}）</div>`).join('') : '';
+    const joinInfo = s.type === 'fusion' ? s.joins.map((j) => ((j.aggregates ?? []).length
+        ? `<div>📊 聚合从表 <code>${esc(j.name)}</code>：<span class="fqn">${esc(j.fqn)}</span> → 每主行挂 0/1 行指标（${j.aggregates.map((a) => `<code>${esc(a.alias)}</code>`).join(' ')} · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code>）</div>`
+        : `<div>融合从表：<span class="fqn">${esc(j.fqn)}</span> → 嵌套字段 <code>${esc(j.name)}</code>（${j.columns.length} 列 · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主键 ≤${j.limitPerParent}）</div>`)).join('') : '';
     const aggInfo = s.type === 'aggregate' ? `
         <div>分组维度：<code>${s.allowedColumns.map(esc).join('</code> <code>')}</code> · 聚合列：${s.aggregates.map((a) => `<code>${esc(a.function)}(${esc(a.column ?? '*')})→${esc(a.alias)}</code>`).join(' ')}</div>` : '';
     const keyRow = s.keyPolicy ? `
@@ -504,6 +505,8 @@ function onJoinTableChange() {
   if (!table) {
     box.innerHTML = '<span class="stat-line">无可选从表列</span>';
     $('#wiz-join-col').innerHTML = '';
+    state.wiz.joinAgg.rows = []; // W6-F：从表切换 → 聚合列候选变了，重置编辑器
+    renderJoinAggRows();
     return;
   }
   box.innerHTML = table.columns.map((c) =>
@@ -513,6 +516,8 @@ function onJoinTableChange() {
   if (table.columns.some((c) => c.name === 'cust_id')) $('#wiz-join-col').value = 'cust_id';
   if (!$('#wiz-join-name').value) $('#wiz-join-name').value = table.table;
   refreshParentColumnOptions();
+  state.wiz.joinAgg.rows = []; // W6-F：同上，聚合列候选随从表重置
+  renderJoinAggRows();
 }
 
 /** 主表关联列 = 当前勾选的主表返回列（发布校验要求 parentColumn ∈ allowedColumns） */
@@ -581,6 +586,53 @@ function renderAggRows() {
   });
 }
 
+/** W6-F：从表聚合列编辑器（函数 × 从表列 × 别名），列候选来自当前从表目录元数据 */
+function renderJoinAggRows() {
+  const wrap = $('#wiz-join-agg-rows');
+  if (!wrap) return;
+  const table = state.tables.find((t) => t.fqn === $('#wiz-join-table').value);
+  const cols = table ? table.columns.map((c) => c.name) : [];
+  if (!state.wiz.joinAgg.rows.length) {
+    state.wiz.joinAgg.rows = [{
+      fn: 'COUNT',
+      col: '*',
+      alias: '',
+    }];
+  }
+  wrap.innerHTML = state.wiz.joinAgg.rows.map((r, i) => `
+    <div class="wiz-row" data-joinagg-row="${i}">
+      <select data-joinagg-fn style="width:100px">${['SUM', 'COUNT', 'AVG', 'MIN', 'MAX']
+        .map((f) => `<option value="${f}" ${f === r.fn ? 'selected' : ''}>${f}</option>`).join('')}</select>
+      <span style="color:var(--text-dim)">(</span>
+      <select data-joinagg-col style="min-width:150px">
+        ${r.fn === 'COUNT' ? `<option value="*" ${r.col === '*' ? 'selected' : ''}>*（全部行）</option>` : ''}
+        ${cols.map((c) => `<option value="${esc(c)}" ${c === r.col ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+      </select>
+      <span style="color:var(--text-dim)">) AS</span>
+      <input data-joinagg-alias value="${esc(r.alias)}" placeholder="输出别名，如 order_count" style="width:180px" />
+      <button class="danger" data-joinagg-del="${i}" ${state.wiz.joinAgg.rows.length <= 1 ? 'disabled' : ''}>✕</button>
+    </div>`).join('');
+  wrap.querySelectorAll('[data-joinagg-fn]').forEach((sel) => {
+    sel.onchange = () => {
+      const i = +sel.closest('[data-joinagg-row]').dataset.joinaggRow;
+      state.wiz.joinAgg.rows[i].fn = sel.value;
+      if (sel.value !== 'COUNT' && state.wiz.joinAgg.rows[i].col === '*') {
+        state.wiz.joinAgg.rows[i].col = cols[0] ?? ''; // 仅 COUNT 可 COUNT(*)
+      }
+      renderJoinAggRows();
+    };
+  });
+  wrap.querySelectorAll('[data-joinagg-col]').forEach((sel) => {
+    sel.onchange = () => { state.wiz.joinAgg.rows[+sel.closest('[data-joinagg-row]').dataset.joinaggRow].col = sel.value; };
+  });
+  wrap.querySelectorAll('[data-joinagg-alias]').forEach((inp) => {
+    inp.oninput = () => { state.wiz.joinAgg.rows[+inp.closest('[data-joinagg-row]').dataset.joinaggRow].alias = inp.value.trim(); };
+  });
+  wrap.querySelectorAll('[data-joinagg-del]').forEach((btn) => {
+    btn.onclick = () => { state.wiz.joinAgg.rows.splice(+btn.dataset.joinaggDel, 1); renderJoinAggRows(); };
+  });
+}
+
 async function publishFromWizard() {
   if (state.wiz.busy) return;
   const fqn = $('#wiz-table').value;
@@ -593,21 +645,37 @@ async function publishFromWizard() {
   if (!name || !slug) { toast('请填写服务名称与 slug', false); return; }
   if (!allowedColumns.length) { toast('至少勾选一个返回列', false); return; }
 
-  // 融合从表（可选）：开关开则组装受控 joins 声明
+  // 融合从表（可选）：开关开则组装受控 joins 声明（W6-F：行级 columns 与聚合 aggregates 二选一）
   let joins = [];
   if (state.wiz.join.on) {
     const joinFqn = $('#wiz-join-table').value;
     const joinName = $('#wiz-join-name').value.trim();
-    const joinColumns = [...document.querySelectorAll('[data-wiz-join-col]:checked')].map((i) => i.dataset.wizJoinCol);
     const joinCol = $('#wiz-join-col').value;
     const parentCol = $('#wiz-parent-col').value;
-    const perParent = +$('#wiz-join-limit').value || 20;
     if (!joinFqn) { toast('融合从表：目录无其他表可选', false); return; }
-    if (!joinName || !/^[A-Za-z][A-Za-z0-9_]*$/.test(joinName)) { toast('输出字段名须为合法标识符（如 orders）', false); return; }
-    if (!joinColumns.length) { toast('至少勾选一个从表列', false); return; }
+    if (!joinName || !/^[A-Za-z][A-Za-z0-9_]*$/.test(joinName)) { toast('输出字段名须为合法标识符（如 orders / orders_agg）', false); return; }
     if (!joinCol || !parentCol) { toast('请选好关联键（从表列 ⇠ 主表列）', false); return; }
     if (!allowedColumns.includes(parentCol)) { toast(`主表关联列 ${parentCol} 须同时勾选进返回列`, false); return; }
-    joins = [{ fqn: joinFqn, name: joinName, columns: joinColumns, joinColumn: joinCol, parentColumn: parentCol, limitPerParent: perParent }];
+    if (state.wiz.joinAgg.on) {
+      // 聚合 join：发 aggregates，不发 columns/limitPerParent（每主行 0/1 行，无需上限）
+      const joinAggs = state.wiz.joinAgg.rows.map((r) => ({
+        function: r.fn, column: r.col === '*' ? null : r.col, alias: r.alias,
+      }));
+      if (!joinAggs.length) { toast('聚合 join：至少声明一个聚合列', false); return; }
+      for (const a of joinAggs) {
+        if (!a.column && a.function !== 'COUNT') { toast(`仅 COUNT 可用 *（空列）—— ${a.function} 需选从表列`, false); return; }
+        if (!a.alias || !/^[A-Za-z0-9_]+$/.test(a.alias)) { toast(`聚合别名须为合法标识符（字母/数字/下划线）—— ${a.function}`, false); return; }
+      }
+      const aliases = joinAggs.map((a) => a.alias);
+      if (new Set(aliases).size !== aliases.length) { toast('聚合别名不能重复', false); return; }
+      if (aliases.some((a) => allowedColumns.includes(a))) { toast('聚合别名不能与主表返回列撞名', false); return; }
+      joins = [{ fqn: joinFqn, name: joinName, joinColumn: joinCol, parentColumn: parentCol, aggregates: joinAggs }];
+    } else {
+      const joinColumns = [...document.querySelectorAll('[data-wiz-join-col]:checked')].map((i) => i.dataset.wizJoinCol);
+      const perParent = +$('#wiz-join-limit').value || 20;
+      if (!joinColumns.length) { toast('至少勾选一个从表列（或切到 📊 聚合模式）', false); return; }
+      joins = [{ fqn: joinFqn, name: joinName, columns: joinColumns, joinColumn: joinCol, parentColumn: parentCol, limitPerParent: perParent }];
+    }
   }
 
   // 聚合列（W6-C，可选）：开关开则组装受限 DSL 声明（与融合互斥由开关切换保证）
@@ -681,7 +749,7 @@ function renderVerifySelect() {
   if (!sel) return;
   const published = state.services.filter((s) => ['table-query', 'fusion', 'aggregate'].includes(s.service.type));
   sel.innerHTML = published.length
-    ? published.map(({ service: s }) => `<option value="${esc(s.slug)}">${esc(s.slug)} —— ${esc(s.name)}${s.type === 'fusion' ? '（融合）' : s.type === 'aggregate' ? '（聚合）' : ''}</option>`).join('')
+    ? published.map(({ service: s }) => `<option value="${esc(s.slug)}">${esc(s.slug)} —— ${esc(s.name)}${s.type === 'fusion' ? (s.joins?.some((j) => (j.aggregates ?? []).length) ? '（融合·含聚合join）' : '（融合）') : s.type === 'aggregate' ? '（聚合）' : ''}</option>`).join('')
     : '<option value="">（尚无已发布服务 —— 先到服务市场发布）</option>';
   if (state.verify.slug && published.some(({ service: s }) => s.slug === state.verify.slug)) {
     sel.value = state.verify.slug;
@@ -698,8 +766,9 @@ function renderVerifyContract() {
   const box = $('#verify-contract');
   const s = currentVerifyService();
   if (!s) { box.innerHTML = ''; return; }
-  const joinInfo = s.type === 'fusion' ? s.joins.map((j) => `
-    <div>融合从表 <code>${esc(j.name)}</code>：<span class="fqn">${esc(j.fqn)}</span> · 列 [${j.columns.map(esc).join(', ')}] · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主键 ≤${j.limitPerParent}</div>`).join('') : '';
+  const joinInfo = s.type === 'fusion' ? s.joins.map((j) => ((j.aggregates ?? []).length
+    ? `<div>📊 聚合从表 <code>${esc(j.name)}</code>：<span class="fqn">${esc(j.fqn)}</span> · 聚合 [${j.aggregates.map((a) => `${esc(a.function)}(${esc(a.column ?? '*')})→${esc(a.alias)}`).join(', ')}] · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主行 ≤1 行</div>`
+    : `<div>融合从表 <code>${esc(j.name)}</code>：<span class="fqn">${esc(j.fqn)}</span> · 列 [${j.columns.map(esc).join(', ')}] · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主键 ≤${j.limitPerParent}</div>`)).join('') : '';
   const aggInfo = s.type === 'aggregate' ? s.aggregates.map((a) => `
     <div>聚合列 <code>${esc(a.function)}(${esc(a.column ?? '*')})</code> → 输出别名 <code>${esc(a.alias)}</code></div>`).join('') : '';
   const keyRow = s.keyPolicy ? `<div>服务 Key：<span class="key-chip">sk-w6-••••（仅发布/轮换时一次性返回）</span>${keyStatusBadge(s.keyPolicy)}（仅本服务 /query 有效 —— 库内只存哈希）</div>` : '';
@@ -909,7 +978,7 @@ async function fusionSuite(s, first, testValue, addRow) {
     const r = await callVerifyQuery(s.slug, { limit: 99999 });
     const d = r.data ?? {};
     const mainRows = d.rows?.length ?? 1e9;
-    const cap = Math.max(...s.joins.map((j) => j.limitPerParent));
+    const cap = Math.max(...s.joins.map((j) => (j.aggregates ?? []).length ? 1 : j.limitPerParent));
     const maxNested = (d.rows ?? []).reduce(
       (m, row) => Math.max(m, ...s.joins.map((j) => (Array.isArray(row[j.name]) ? row[j.name].length : 0))), 0);
     const ok = r.http === 200 && mainRows <= 500 && maxNested <= cap;
@@ -920,11 +989,15 @@ async function fusionSuite(s, first, testValue, addRow) {
     });
   }
 
-  // FV5 发布白名单闸（融合）：从表列塞注入 payload → 400
+  // FV5 发布白名单闸（融合）：从表列/聚合列塞注入 payload → 400
   {
     const mainTable = state.tables.find((t) => t.source === s.source && t.table === s.table);
     const j = s.joins[0];
     if (mainTable && j) {
+      // W6-F：聚合 join 探聚合列，行级 join 探从表列
+      const evilJoin = (j.aggregates ?? []).length
+        ? { ...j, aggregates: [{ ...j.aggregates[0], column: `${j.aggregates[0].column ?? 'cust_id'}; DROP TABLE orders` }] }
+        : { ...j, columns: [j.columns[0], 'cust_id; DROP TABLE orders'] };
       const probeSlug = `verify-probe-${Date.now()}`;
       const res = await fetch('/api/w5/services', {
         method: 'POST',
@@ -933,7 +1006,7 @@ async function fusionSuite(s, first, testValue, addRow) {
           slug: probeSlug, name: '验证探针（应被拒）', description: 'verify probe',
           fqn: mainTable.fqn,
           allowedColumns: s.allowedColumns, filters: [], defaultLimit: 5,
-          joins: [{ ...j, columns: [j.columns[0], 'cust_id; DROP TABLE orders'] }],
+          joins: [evilJoin],
         }),
       });
       let msg = '';
@@ -973,9 +1046,9 @@ async function fusionSuite(s, first, testValue, addRow) {
     });
   }
 
-  // FV7 金标用例：customer×orders 种子已知值 C0001 → 张伟 + 2 单
+  // FV7 金标用例：customer×orders 种子已知值 C0001 → 张伟 + 2 单（行级 join；聚合 join 见 FV8）
   {
-    const ordersJoin = s.joins.find((j) => j.fqn.endsWith('.orders'));
+    const ordersJoin = s.joins.find((j) => j.fqn.endsWith('.orders') && !(j.aggregates ?? []).length);
     if (s.table === 'customer' && ordersJoin) {
       const hasCustIdFilter = s.filters.some((f) => f.column === 'cust_id');
       const r = await callVerifyQuery(s.slug, hasCustIdFilter ? { cust_id: 'C0001' } : { limit: 20 });
@@ -987,7 +1060,65 @@ async function fusionSuite(s, first, testValue, addRow) {
         detail: row ? `${row.cust_name} · ${row[ordersJoin.name]?.length ?? 0} 单` : '未取到 C0001 主行',
       });
     } else {
-      addRow({ id: 'FV7', name: '金标用例', expect: '种子已知值比对', status: 'skip', detail: '仅 customer×orders 融合服务带金标（演示种子）' });
+      addRow({ id: 'FV7', name: '金标用例', expect: '种子已知值比对', status: 'skip', detail: '仅 customer×orders 行级融合带金标（聚合 join 走 FV8）' });
+    }
+  }
+
+  // FV8 聚合 join 金标 + 别名注入闸（W6-F）：C0001 → orders_agg[0]{order_count:2, total_amount:4670.50}
+  {
+    const aggJoin = s.joins.find((j) => (j.aggregates ?? []).length);
+    if (aggJoin) {
+      // ① 金标（customer×orders 演示种子：COUNT(*)=2 · SUM(order_amount)=4670.50）
+      const cntAgg = aggJoin.aggregates.find((a) => a.function === 'COUNT');
+      const sumAgg = aggJoin.aggregates.find((a) => a.function === 'SUM' && a.column === 'order_amount');
+      const goldenApplicable = s.table === 'customer' && aggJoin.fqn.endsWith('.orders') && cntAgg && sumAgg;
+      let goldenOk = true;
+      let goldenDetail = '非 customer×orders COUNT+SUM(order_amount) 形态 —— 金标跳过';
+      if (goldenApplicable) {
+        const hasCustIdFilter = s.filters.some((f) => f.column === 'cust_id');
+        const r = await callVerifyQuery(s.slug, hasCustIdFilter ? { cust_id: 'C0001' } : { limit: 20 });
+        const row = (r.data?.rows ?? []).find((x) => x.cust_id === 'C0001');
+        const nested = row?.[aggJoin.name] ?? [];
+        const cnt = nested[0]?.[cntAgg.alias];
+        const amt = nested[0]?.[sumAgg.alias];
+        goldenOk = r.http === 200 && row?.cust_name === '张伟'
+          && nested.length === 1 && String(cnt) === '2' && String(amt) === '4670.50';
+        goldenDetail = row
+          ? `${row.cust_name} · ${aggJoin.name}[0]{${cntAgg.alias}:${cnt}, ${sumAgg.alias}:${amt}}`
+          : '未取到 C0001 主行';
+      }
+      // ② 别名注入发布闸：聚合 join 的 alias 塞 payload → 400（列取从表元数据首列，确保只有 alias 是失败原因）
+      const mainTable = state.tables.find((t) => t.source === s.source && t.table === s.table);
+      const joinTableMeta = state.tables.find((t) => t.fqn === aggJoin.fqn);
+      if (!mainTable || !joinTableMeta) {
+        addRow({ id: 'FV8', name: '聚合 join 金标+注入闸', expect: '金标 + 别名注入发布闸', status: 'skip', detail: `${goldenDetail} · 目录无主/从表 FQN —— 探针跳过` });
+        return;
+      }
+      const probeSlug = `verify-probe-${Date.now()}f8`;
+      const res = await fetch('/api/w5/services', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slug: probeSlug, name: '验证探针（应被拒）', description: 'verify probe',
+          fqn: mainTable.fqn, allowedColumns: s.allowedColumns, filters: [], defaultLimit: 5,
+          joins: [{
+            fqn: aggJoin.fqn, name: aggJoin.name,
+            joinColumn: aggJoin.joinColumn, parentColumn: aggJoin.parentColumn,
+            aggregates: [{ function: 'COUNT', column: null, alias: 'cnt; DROP TABLE orders' }],
+          }],
+        }),
+      });
+      let probeMsg = '';
+      try { probeMsg = (await res.json()).message ?? ''; } catch { /* ignore */ }
+      if (res.status === 201) await fetch(`/api/w5/services/${encodeURIComponent(probeSlug)}`, { method: 'DELETE' });
+      addRow({
+        id: 'FV8', name: '聚合 join 金标+注入闸',
+        expect: 'C0001 → 嵌套聚合行 order_count=2 · total_amount=4670.50 · alias 塞「cnt; DROP…」发布 → 400',
+        status: goldenOk && res.status === 400 ? 'pass' : 'fail',
+        detail: `${goldenDetail} · 别名探针 HTTP ${res.status} · ${String(probeMsg).slice(0, 70)}`,
+      });
+    } else {
+      addRow({ id: 'FV8', name: '聚合 join 金标+注入闸', expect: '聚合 join 金标 + 别名注入发布闸', status: 'skip', detail: '该融合服务未声明聚合 join（行级从行）' });
     }
   }
 }
@@ -1141,6 +1272,19 @@ $('#wiz-agg-add').onclick = () => {
   renderAggRows();
 };
 $('#wiz-join-table').onchange = onJoinTableChange;
+// W6-F：从表聚合模式开关 —— 开则隐藏行级列勾选/每主键上限，显示聚合行编辑器（与行级二选一）
+$('#wiz-join-agg-on').onchange = (e) => {
+  state.wiz.joinAgg.on = e.target.checked;
+  $('#wiz-join-cols-row').style.display = e.target.checked ? 'none' : 'flex';
+  $('#wiz-join-limit-wrap').style.display = e.target.checked ? 'none' : 'inline-flex';
+  $('#wiz-join-agg-block').style.display = e.target.checked ? 'block' : 'none';
+  if (e.target.checked) renderJoinAggRows();
+};
+$('#wiz-join-agg-add').onclick = () => {
+  if (state.wiz.joinAgg.rows.length >= 5) { toast('聚合列最多 5 个', false); return; }
+  state.wiz.joinAgg.rows.push({ fn: 'COUNT', col: '*', alias: '' });
+  renderJoinAggRows();
+};
 $('#wiz-add-filter').onclick = () => {
   const col = $('#wiz-filter-col').value;
   const op = $('#wiz-filter-op').value;
