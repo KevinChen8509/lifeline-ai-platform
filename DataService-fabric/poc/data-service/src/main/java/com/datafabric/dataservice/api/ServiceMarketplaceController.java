@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
  * W5/W6 服务市场：
  *   - 目录：GET /api/v1/services（builtin + 自助发布）
  *   - 自助发布：POST /api/v1/services（校验见 ServiceRegistry；融合声明见 joins）
- *   - 试调：GET /api/v1/services/{slug}/query（table-query / fusion / aggregate）
+ *   - 试调：GET /api/v1/services/{slug}/query（table-query / fusion / aggregate / agg-fusion）
  *   - 下线：DELETE /api/v1/services/{slug}
  *   - W6-B 运营：POST /{slug}/key/rotate · POST /{slug}/key/revoke · GET /{slug}/usage
  *
@@ -162,7 +162,9 @@ public class ServiceMarketplaceController {
         List<ServiceDefinition.FilterSpec> applied = resolveFilters(def, params);
 
         long start = System.currentTimeMillis();
-        List<Map<String, String>> mainRows = ServiceDefinition.TYPE_AGGREGATE.equals(def.type())
+        boolean aggMain = ServiceDefinition.TYPE_AGGREGATE.equals(def.type())
+                || ServiceDefinition.TYPE_AGG_FUSION.equals(def.type());
+        List<Map<String, String>> mainRows = aggMain
                 ? executeAggregate(def, applied, params, limit)
                 : execute(def, applied, params, limit);
         long elapsed = System.currentTimeMillis() - start;
@@ -170,11 +172,23 @@ public class ServiceMarketplaceController {
         registry.recordCall(slug);
         if (ServiceDefinition.TYPE_AGGREGATE.equals(def.type())) {
             // 聚合响应复用 QueryResponse：columns = 分组维度 + 聚合别名
-            List<String> outCols = new ArrayList<>(def.allowedColumns());
-            def.aggregates().forEach(a -> outCols.add(a.alias()));
             serviceCallLog.info("{\"slug\":\"{}\",\"type\":\"aggregate\",\"source\":\"{}\",\"table\":\"{}\",\"filters\":{},\"rows\":{},\"aggregates\":{},\"limit\":{},\"elapsedMs\":{}}",
                     slug, def.source(), def.table(), params.size(), mainRows.size(), def.aggregates().size(), limit, elapsed);
-            return new QueryResponse(slug, outCols, mainRows, mainRows.size(), elapsed);
+            return new QueryResponse(slug, aggOutColumns(def), mainRows, mainRows.size(), elapsed);
+        }
+        if (ServiceDefinition.TYPE_AGG_FUSION.equals(def.type())) {
+            // W6-G 组合形态：主表 GROUP BY（主行 = 维度 + 聚合别名）+ 从表按维度值挂载 ——
+            // 复用 executeAggregate 与 attachJoins 两段式管道，零执行层改动
+            List<Map<String, Object>> rows = new ArrayList<>(mainRows.size());
+            for (Map<String, String> r : mainRows) {
+                rows.add(new LinkedHashMap<String, Object>(r));
+            }
+            attachJoins(def, rows);
+            serviceCallLog.info("{\"slug\":\"{}\",\"type\":\"agg-fusion\",\"source\":\"{}\",\"table\":\"{}\",\"joinSources\":{},\"filters\":{},\"rows\":{},\"joins\":{},\"aggregates\":{},\"limit\":{},\"elapsedMs\":{}}",
+                    slug, def.source(), def.table(),
+                    def.joins().stream().map(j -> j.fqn().substring(0, j.fqn().indexOf('.')).toLowerCase(java.util.Locale.ROOT)).toList(),
+                    params.size(), rows.size(), def.joins().size(), def.aggregates().size(), limit, elapsed);
+            return new FusionQueryResponse(slug, aggOutColumns(def), joinViews(def), rows, rows.size(), elapsed);
         }
         if (ServiceDefinition.TYPE_FUSION.equals(def.type())) {
             List<Map<String, Object>> rows = new ArrayList<>(mainRows.size());
@@ -186,13 +200,7 @@ public class ServiceMarketplaceController {
                     slug, def.source(), def.table(),
                     def.joins().stream().map(j -> j.fqn().substring(0, j.fqn().indexOf('.')).toLowerCase(java.util.Locale.ROOT)).toList(),
                     params.size(), rows.size(), def.joins().size(), limit, elapsed);
-            return new FusionQueryResponse(slug, def.allowedColumns(),
-                    def.joins().stream().map(j -> new JoinView(j.name(),
-                            // W6-F：聚合 join 透出聚合别名（行级透出从表列）—— 前端按列名数组渲染表头
-                            j.aggregates().isEmpty() ? j.columns()
-                                    : j.aggregates().stream().map(ServiceDefinition.AggSpec::alias).toList()))
-                            .toList(),
-                    rows, rows.size(), elapsed);
+            return new FusionQueryResponse(slug, def.allowedColumns(), joinViews(def), rows, rows.size(), elapsed);
         }
         serviceCallLog.info("{\"slug\":\"{}\",\"source\":\"{}\",\"table\":\"{}\",\"filters\":{},\"rows\":{},\"limit\":{},\"elapsedMs\":{}}",
                 slug, def.source(), def.table(), params.size(), mainRows.size(), limit, elapsed);
@@ -453,6 +461,22 @@ public class ServiceMarketplaceController {
             throw new SourceUnavailableException(def.source(), e);
         }
         return rows;
+    }
+
+    /** 聚合形态输出列 = 分组维度 + 聚合别名（aggregate / agg-fusion 共用） */
+    private static List<String> aggOutColumns(ServiceDefinition def) {
+        List<String> outCols = new ArrayList<>(def.allowedColumns());
+        def.aggregates().forEach(a -> outCols.add(a.alias()));
+        return outCols;
+    }
+
+    /** 响应 join 元数据：行级透从表列，W6-F 聚合 join 透聚合别名 —— fusion / agg-fusion 共用 */
+    private static List<JoinView> joinViews(ServiceDefinition def) {
+        return def.joins().stream()
+                .map(j -> new JoinView(j.name(),
+                        j.aggregates().isEmpty() ? j.columns()
+                                : j.aggregates().stream().map(ServiceDefinition.AggSpec::alias).toList()))
+                .toList();
     }
 
     private static String operatorSql(String operator) {

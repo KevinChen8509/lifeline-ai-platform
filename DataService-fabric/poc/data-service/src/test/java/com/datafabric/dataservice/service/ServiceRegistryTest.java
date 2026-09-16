@@ -618,14 +618,16 @@ class ServiceRegistryTest {
     }
 
     @Test
-    @DisplayName("聚合发布：aggregates 与 joins 同时声明 → 拒绝（互斥）")
-    void publish_aggregatesWithJoins_rejected() {
-        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+    @DisplayName("组合发布（W6-G）：aggregates 与 joins 同报 → TYPE_AGG_FUSION（互斥已开闸）")
+    void publish_aggregatesWithJoins_acceptedAsAggFusion() {
+        ServiceDefinition def = registry.publish(new ServiceRegistry.PublishRequest(
                 "agg-join-mix", "聚合+融合", "", "mysql.customer_db.customer",
                 List.of("cust_id"), List.of(), List.of(validJoin("orders")),
-                List.of(agg("COUNT", null, "cnt")), 10, null, null)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("互斥");
+                List.of(agg("COUNT", null, "cnt")), 10, null, null)).definition();
+
+        assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_AGG_FUSION);
+        assertThat(def.joins()).hasSize(1);
+        assertThat(def.aggregates()).hasSize(1);
     }
 
     @Test
@@ -640,5 +642,57 @@ class ServiceRegistryTest {
         assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_AGGREGATE);
         assertThat(def.filters()).hasSize(1);
         assertThat(def.filters().get(0).column()).isEqualTo("cust_level");
+    }
+
+    // ============ W6-G 组合形态（agg-fusion：主表 GROUP BY + 从表挂载） ============
+
+    @Test
+    @DisplayName("组合发布：主表聚合 + 聚合 join 同报 → agg-fusion（join 级聚合在组合形态同样可用）")
+    void publish_aggFusionWithAggJoin_valid() {
+        ServiceDefinition def = registry.publish(new ServiceRegistry.PublishRequest(
+                "aggfusion-full", "全组合", "", "mysql.customer_db.customer",
+                List.of("cust_id"), List.of(),
+                List.of(new ServiceRegistry.JoinRequest(
+                        "mysql.customer_db.orders", "orders_agg", List.of(),
+                        "cust_id", "cust_id", null,
+                        List.of(new ServiceRegistry.AggRequest("SUM", "order_amount", "order_total")))),
+                List.of(agg("COUNT", null, "cnt")), 10, null, null)).definition();
+
+        assertThat(def.type()).isEqualTo(ServiceDefinition.TYPE_AGG_FUSION);
+        assertThat(def.joins().get(0).aggregates()).hasSize(1);
+        assertThat(def.aggregates()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("组合发布闸：join.name 撞分组维度 / 撞顶层聚合别名 → 拒绝（主行输出键两两不撞）")
+    void publish_aggFusion_joinNameCollisions_rejected() {
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "aggfusion-name-dim", "撞维度", "", "mysql.customer_db.customer",
+                List.of("cust_id"), List.of(), List.of(validJoin("cust_id")),
+                List.of(agg("COUNT", null, "cnt")), 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("撞名");
+
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "aggfusion-name-alias", "撞别名", "", "mysql.customer_db.customer",
+                List.of("cust_id"), List.of(), List.of(validJoin("cnt")),
+                List.of(agg("COUNT", null, "cnt")), 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("撞名");
+    }
+
+    @Test
+    @DisplayName("组合发布闸：从表聚合别名撞顶层聚合别名 → 拒绝（跨层撞名，W6-G）")
+    void publish_aggFusion_joinAggAliasCollidesWithTopAlias_rejected() {
+        assertThatThrownBy(() -> registry.publish(new ServiceRegistry.PublishRequest(
+                "aggfusion-joinagg-clash", "从表聚合撞顶层", "", "mysql.customer_db.customer",
+                List.of("cust_id"), List.of(),
+                List.of(new ServiceRegistry.JoinRequest(
+                        "mysql.customer_db.orders", "orders_agg", List.of(),
+                        "cust_id", "cust_id", null,
+                        List.of(new ServiceRegistry.AggRequest("SUM", "order_amount", "cnt")))),
+                List.of(agg("COUNT", null, "cnt")), 10, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("撞名");
     }
 }

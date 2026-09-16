@@ -248,3 +248,4 @@ Week 1 完成后，进入 Week 2（语义层 + 治理嵌入 + 服务层）：
 | Week 6-D | 跨源融合：MySQL 主表 + PostgreSQL 从表（引号方言 + 库.表限定） | `WEEK6D-RESULTS.md` |
 | Week 6-E | production-audit 复审 + B1 prod 凭据守卫 + B2 服务 Key 哈希化（一次性返回） | `WEEK6E-RESULTS.md` |
 | Week 6-F | 组合形态：从表聚合挂主行（join-level aggregates，每主行 0/1 行指标）+ FV8 | `WEEK6F-RESULTS.md` |
+| Week 6-G | 组合形态：主表 GROUP BY + 从表按维度挂载（agg-fusion 开闸）+ 跨层撞名闸 + CF1/CF2 | `WEEK6G-RESULTS.md` |

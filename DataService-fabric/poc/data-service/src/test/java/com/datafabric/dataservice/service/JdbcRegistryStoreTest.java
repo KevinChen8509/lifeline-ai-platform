@@ -345,4 +345,42 @@ class JdbcRegistryStoreTest {
         assertThat(ServiceKeys.isPlaintextFormat("sk-w6-roundtrip0001")).isFalse(); // 非 32 hex 不误判
         assertThat(ServiceKeys.isPlaintextFormat(null)).isFalse();
     }
+
+    // ============ W6-G 组合形态持久化（agg-fusion：type + joins + aggregates 三保留） ============
+
+    @Test
+    @DisplayName("组合往返：save → loadAll type/joins/aggregates 逐字段一致（零 DDL，type 列容纳 agg-fusion）")
+    void aggFusionRoundTrip_preservesTypeJoinsAggregates() {
+        JdbcRegistryStore store = new JdbcRegistryStore(pool);
+        ServiceDefinition original = new ServiceDefinition(
+                "roundtrip-aggfusion", "按客户汇总并挂风险", "W6-G 往返",
+                ServiceDefinition.TYPE_AGG_FUSION, null, null,
+                "mysql", "customer_db", "orders",
+                List.of("cust_id"),
+                List.of(new ServiceDefinition.FilterSpec("cust_level", "eq")),
+                List.of(new ServiceDefinition.JoinSpec(
+                        "postgres.external.risk_tags", "risk_tags",
+                        List.of("risk_level", "risk_score"), "cust_id", "cust_id", 5,
+                        List.of())),
+                List.of(
+                        new ServiceDefinition.AggSpec("COUNT", null, "order_count"),
+                        new ServiceDefinition.AggSpec("SUM", "order_amount", "total_amount")),
+                10, ServiceKeys.sha256Hex("sk-w6-aggfusion0005"),
+                new ServiceDefinition.KeyPolicy(
+                        ServiceDefinition.KeyPolicy.STATUS_ACTIVE, null, 60),
+                Instant.parse("2026-09-15T00:00:00Z"));
+        store.save(original);
+
+        ServiceDefinition restored = store.loadAll().stream()
+                .filter(d -> d.slug().equals("roundtrip-aggfusion"))
+                .findFirst().orElseThrow();
+
+        assertThat(restored.type()).isEqualTo(ServiceDefinition.TYPE_AGG_FUSION);
+        assertThat(restored.joins()).hasSize(1);
+        assertThat(restored.joins().get(0).fqn()).isEqualTo("postgres.external.risk_tags");
+        assertThat(restored.joins().get(0).columns()).containsExactly("risk_level", "risk_score");
+        assertThat(restored.aggregates()).hasSize(2);
+        assertThat(restored.aggregates().get(0).sqlExpr()).isEqualTo("COUNT(*)");
+        assertThat(restored.aggregates().get(1).sqlExpr()).isEqualTo("SUM(`order_amount`)");
+    }
 }

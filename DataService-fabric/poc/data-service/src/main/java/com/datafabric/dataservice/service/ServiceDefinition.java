@@ -14,6 +14,8 @@ import java.util.List;
  *                  两段参数化查询，应用层按关联键组装嵌套 JSON
  *   - aggregate    分组聚合查询（W6-C 核心）：allowedColumns = GROUP BY 维度 + aggregates
  *                  聚合列声明（SUM/COUNT/AVG/MIN/MAX），单条 GROUP BY SQL，输出维度+别名
+ *   - agg-fusion   组合形态（W6-G）：主表 GROUP BY（维度=allowedColumns）+ joins 从表挂载 ——
+ *                  主行 = 维度 + 聚合别名 + 嵌套从行；parentColumn 必是维度（挂载语义）
  *
  * 安全模型：allowedColumns / filters.column / joins.*.columns / joinColumn 在发布时
  * 对照 OpenMetadata 元数据校验（第一道闸），执行时再做标识符正则复检（第二道闸），
@@ -56,6 +58,8 @@ public record ServiceDefinition(
     public static final String TYPE_TABLE_QUERY = "table-query";
     public static final String TYPE_FUSION = "fusion";
     public static final String TYPE_AGGREGATE = "aggregate";
+    /** W6-G 组合形态：主表 GROUP BY（维度=allowedColumns）+ 从表按维度挂载 */
+    public static final String TYPE_AGG_FUSION = "agg-fusion";
 
     /** key 生命周期策略（builtin 无 key → keyPolicy 为 null） */
     public record KeyPolicy(String status, Instant expiresAt, int rateLimitPerMin) {

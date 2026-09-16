@@ -47,7 +47,8 @@ public class ServiceRegistry {
     private static final long MAX_TTL_HOURS = 24L * 365 * 10;
     private static final long RATE_WINDOW_MS = 60_000;
 
-    /** 发布请求体（fqn 为主表目录全限定名，table 取其末段；joins 非空 → fusion；aggregates 非空 → aggregate） */
+    /** 发布请求体（fqn 为主表目录全限定名，table 取其末段；joins 非空 → fusion；
+     *  aggregates 非空 → aggregate；两者皆非空 → agg-fusion 组合形态，W6-G） */
     public record PublishRequest(
             String slug, String name, String description, String fqn,
             List<String> allowedColumns, List<ServiceDefinition.FilterSpec> filters,
@@ -148,14 +149,14 @@ public class ServiceRegistry {
                 throw new IllegalArgumentException("列 " + col + " 不在目录表 " + req.fqn() + " 的元数据中");
             }
         }
-        // 第一道闸（融合从表）：列/关联键逐字命中从表 OM 元数据，主表关联键 ∈ 主表白名单
-        List<ServiceDefinition.JoinSpec> joins = normalizeJoins(req.joins(), columns);
-
-        // 第一道闸（聚合列，W6-C）：函数白名单 + 列逐字命中 OM 元数据 + alias 唯一；与 joins 互斥
+        // 第一道闸（聚合列，W6-C）：函数白名单 + 列逐字命中 OM 元数据 + alias 唯一不撞维度
         List<ServiceDefinition.AggSpec> aggregates = normalizeAggregates(req.aggregates(), metaColumns, columns);
-        if (!aggregates.isEmpty() && !joins.isEmpty()) {
-            throw new IllegalArgumentException("聚合与融合互斥，不能同时声明（聚合+组合属 Phase 3+）");
-        }
+
+        // 第一道闸（融合从表）：列/关联键逐字命中从表 OM 元数据，主表关联键 ∈ 主表白名单；
+        // W6-G 组合形态（agg-fusion）：顶层聚合别名一并传入 —— join.name / 从表聚合别名
+        // 不得与主行输出键（维度 ∪ 顶层别名）撞名
+        List<ServiceDefinition.JoinSpec> joins = normalizeJoins(req.joins(), columns,
+                aggregates.stream().map(ServiceDefinition.AggSpec::alias).toList());
         // 聚合形态的过滤列放宽为「命中元数据即可」（WHERE 先于 GROUP BY，非维度列合法）；
         // table-query / fusion 保持过滤列 ∈ allowedColumns 的旧不变式
         List<ServiceDefinition.FilterSpec> filters = normalizeFilters(
@@ -172,7 +173,8 @@ public class ServiceRegistry {
         }
         Instant keyExpiresAt = ttlToExpiry(req.keyTtlHours());
 
-        String type = !aggregates.isEmpty() ? ServiceDefinition.TYPE_AGGREGATE
+        String type = !aggregates.isEmpty() && !joins.isEmpty() ? ServiceDefinition.TYPE_AGG_FUSION
+                : !aggregates.isEmpty() ? ServiceDefinition.TYPE_AGGREGATE
                 : joins.isEmpty() ? ServiceDefinition.TYPE_TABLE_QUERY : ServiceDefinition.TYPE_FUSION;
         String plainKey = ServiceKeys.generate();
         ServiceDefinition def = new ServiceDefinition(slug, req.name().trim(),
@@ -203,9 +205,10 @@ public class ServiceRegistry {
         return Instant.now().plusSeconds(keyTtlHours * 3600);
     }
 
-    /** 融合从表校验链（受限 DSL：不开放任意 SQL，标识符全部来自元数据白名单） */
+    /** 融合从表校验链（受限 DSL：不开放任意 SQL，标识符全部来自元数据白名单）；
+     *  topAliases = 顶层聚合别名（W6-G 组合形态的跨层撞名保留字） */
     private List<ServiceDefinition.JoinSpec> normalizeJoins(
-            List<JoinRequest> joins, List<String> mainColumns) {
+            List<JoinRequest> joins, List<String> mainColumns, List<String> topAliases) {
         if (joins == null || joins.isEmpty()) {
             return List.of();
         }
@@ -221,6 +224,11 @@ public class ServiceRegistry {
             String joinName = requireMatch(j.name(), IDENTIFIER_PATTERN, "join.name 不合法: " + j.name());
             if (names.contains(joinName)) {
                 throw new IllegalArgumentException("join.name 重复: " + joinName);
+            }
+            if (mainColumns.contains(joinName) || topAliases.contains(joinName)) {
+                // W6-G：join.name 挂载为主行嵌套键，撞维度/顶层聚合别名会覆盖主行输出列
+                throw new IllegalArgumentException(
+                        "join.name 与主行输出列（维度/聚合别名）撞名: " + joinName);
             }
             names.add(joinName);
 
@@ -251,8 +259,11 @@ public class ServiceRegistry {
                     }
                 }
             } else {
-                // 聚合列对照【从表】元数据校验（W6-C 同一校验链）；alias 不与主表输出列撞名
-                aggSpecs = normalizeAggregates(joinAggs, joinMeta, mainColumns);
+                // 聚合列对照【从表】元数据校验（W6-C 同一校验链）；
+                // 保留字 = 主表输出列 + 顶层聚合别名（W6-G：跨层撞名一并拒绝）
+                List<String> reserved = new ArrayList<>(mainColumns);
+                reserved.addAll(topAliases);
+                aggSpecs = normalizeAggregates(joinAggs, joinMeta, reserved);
             }
             String joinColumn = requireMatch(j.joinColumn(), IDENTIFIER_PATTERN,
                     "joinColumn 不合法: " + j.joinColumn());
@@ -276,8 +287,9 @@ public class ServiceRegistry {
     }
 
     /**
-     * 聚合列校验链（W6-C 受限 DSL）：函数白名单 + 列逐字命中主表元数据 +
-     * alias 标识符唯一不撞维度；与 joins 互斥（聚合+融合不组合，Phase 3+）。
+     * 聚合列校验链（W6-C 受限 DSL）：函数白名单 + 列逐字命中元数据 +
+     * alias 标识符唯一不撞既有输出列（dims：主形态 = 分组维度；join 聚合 = 主表输出列
+     * + 顶层聚合别名，W6-G）。
      */
     private static List<ServiceDefinition.AggSpec> normalizeAggregates(
             List<AggRequest> aggregates, Set<String> metaColumns, List<String> dims) {

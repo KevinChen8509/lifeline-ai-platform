@@ -263,7 +263,7 @@ const BUILTIN_TRY_PATH = {
 
 function renderServices() {
   const builtin = state.services.filter((s) => s.service.type === 'builtin');
-  const published = state.services.filter((s) => ['table-query', 'fusion', 'aggregate'].includes(s.service.type));
+  const published = state.services.filter((s) => ['table-query', 'fusion', 'aggregate', 'agg-fusion'].includes(s.service.type));
   renderVerifySelect();
 
   $('#builtin-grid').innerHTML = builtin.map(({ service: s, callCount }) => `
@@ -294,10 +294,10 @@ function renderServices() {
   $('#published-grid').innerHTML = published.map(({ service: s, callCount }) => {
     const filterInputs = s.filters.map((f) => `
       <label style="font-size:12px;color:var(--text-dim)">${esc(f.column)} (${esc(f.operator)})<input data-svc-param="${esc(f.column)}" style="width:120px;margin-left:6px" placeholder="如 ${esc(defaultHint(s.table, f.column))}"></label>`).join('');
-    const joinInfo = s.type === 'fusion' ? s.joins.map((j) => ((j.aggregates ?? []).length
+    const joinInfo = ['fusion', 'agg-fusion'].includes(s.type) ? s.joins.map((j) => ((j.aggregates ?? []).length
         ? `<div>📊 聚合从表 <code>${esc(j.name)}</code>：<span class="fqn">${esc(j.fqn)}</span> → 每主行挂 0/1 行指标（${j.aggregates.map((a) => `<code>${esc(a.alias)}</code>`).join(' ')} · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code>）</div>`
         : `<div>融合从表：<span class="fqn">${esc(j.fqn)}</span> → 嵌套字段 <code>${esc(j.name)}</code>（${j.columns.length} 列 · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主键 ≤${j.limitPerParent}）</div>`)).join('') : '';
-    const aggInfo = s.type === 'aggregate' ? `
+    const aggInfo = ['aggregate', 'agg-fusion'].includes(s.type) ? `
         <div>分组维度：<code>${s.allowedColumns.map(esc).join('</code> <code>')}</code> · 聚合列：${s.aggregates.map((a) => `<code>${esc(a.function)}(${esc(a.column ?? '*')})→${esc(a.alias)}</code>`).join(' ')}</div>` : '';
     const keyRow = s.keyPolicy ? `
       <div class="wiz-row" style="margin:8px 0 0;min-width:100%">
@@ -309,16 +309,16 @@ function renderServices() {
         <button class="ghost" data-svc-usage="${esc(s.slug)}">📊 用量</button>
       </div>
       <div style="font-size:12px;color:var(--text-dim)">限流 ${s.keyPolicy.rateLimitPerMin}/分 · Key ${s.keyPolicy.expiresAt ? `到期 ${esc(s.keyPolicy.expiresAt.replace('T', ' ').slice(0, 16))} UTC` : '永久有效'} · 仅可调本服务 /query（恒时校验，库内只存哈希）</div>` : '';
-    const typeBadge = s.type === 'fusion' ? '<span class="badge fusion">JOIN</span>' : '';
-    const aggBadge = s.type === 'aggregate' ? '<span class="badge agg">AGG</span>' : '';
+    const typeBadge = ['fusion', 'agg-fusion'].includes(s.type) ? '<span class="badge fusion">JOIN</span>' : '';
+    const aggBadge = ['aggregate', 'agg-fusion'].includes(s.type) ? '<span class="badge agg">AGG</span>' : '';
     return `
     <div class="card" data-slug="${esc(s.slug)}">
       <h3><span class="badge published">已发布</span>${typeBadge}${aggBadge}${esc(s.name)}</h3>
       <div class="svc-path">GET /api/v1/services/${esc(s.slug)}/query</div>
       <div class="desc">${esc(s.description || '（无描述）')}</div>
       <div class="cols">
-        <div>${s.type === 'aggregate' ? '分组维度' : '返回列'}：<code>${s.allowedColumns.map(esc).join('</code> <code>')}</code></div>
-        <div>过滤参数：${s.filters.length ? s.filters.map((f) => `<code>${esc(f.column)}:${esc(f.operator)}</code>`).join(' ') : '（无）'}${s.type === 'aggregate' ? '（聚合前 WHERE）' : ''}</div>
+        <div>${['aggregate', 'agg-fusion'].includes(s.type) ? '分组维度' : '返回列'}：<code>${s.allowedColumns.map(esc).join('</code> <code>')}</code></div>
+        <div>过滤参数：${s.filters.length ? s.filters.map((f) => `<code>${esc(f.column)}:${esc(f.operator)}</code>`).join(' ') : '（无）'}${['aggregate', 'agg-fusion'].includes(s.type) ? '（聚合前 WHERE）' : ''}</div>
         <div>源表：<span class="fqn">${esc(s.source)}.${esc(s.table)}</span> · 默认 ${s.defaultLimit} 行（上限 500）</div>
         ${joinInfo}
         ${aggInfo}
@@ -694,6 +694,15 @@ async function publishFromWizard() {
     if (aliases.some((a) => allowedColumns.includes(a))) { toast('聚合别名不能与分组维度（返回列）撞名', false); return; }
   }
 
+  // W6-G：组合形态（聚合+融合同开）客户端预检 —— 主行输出键两两不撞
+  if (joins.length && aggregates.length) {
+    const reserved = [...allowedColumns, ...aggregates.map((a) => a.alias)];
+    if (reserved.includes(joins[0].name)) { toast(`融合输出字段名「${joins[0].name}」与返回列/聚合别名撞名（W6-G 新闸）`, false); return; }
+    for (const ja of joins[0].aggregates ?? []) {
+      if (aggregates.some((top) => top.alias === ja.alias)) { toast(`从表聚合别名 ${ja.alias} 与顶层聚合别名撞名`, false); return; }
+    }
+  }
+
   // W6-B：可选限流（次/分）与 Key 有效期（小时）—— 留空走服务端默认（60/永久）
   const rateLimit = +$('#wiz-rate').value;
   const ttlHours = +$('#wiz-ttl').value;
@@ -747,9 +756,9 @@ function gotoVerify(slug) {
 function renderVerifySelect() {
   const sel = $('#verify-slug');
   if (!sel) return;
-  const published = state.services.filter((s) => ['table-query', 'fusion', 'aggregate'].includes(s.service.type));
+  const published = state.services.filter((s) => ['table-query', 'fusion', 'aggregate', 'agg-fusion'].includes(s.service.type));
   sel.innerHTML = published.length
-    ? published.map(({ service: s }) => `<option value="${esc(s.slug)}">${esc(s.slug)} —— ${esc(s.name)}${s.type === 'fusion' ? (s.joins?.some((j) => (j.aggregates ?? []).length) ? '（融合·含聚合join）' : '（融合）') : s.type === 'aggregate' ? '（聚合）' : ''}</option>`).join('')
+    ? published.map(({ service: s }) => `<option value="${esc(s.slug)}">${esc(s.slug)} —— ${esc(s.name)}${s.type === 'agg-fusion' ? '（组合：主表聚合+从表挂载）' : s.type === 'fusion' ? (s.joins?.some((j) => (j.aggregates ?? []).length) ? '（融合·含聚合join）' : '（融合）') : s.type === 'aggregate' ? '（聚合）' : ''}</option>`).join('')
     : '<option value="">（尚无已发布服务 —— 先到服务市场发布）</option>';
   if (state.verify.slug && published.some(({ service: s }) => s.slug === state.verify.slug)) {
     sel.value = state.verify.slug;
@@ -766,18 +775,18 @@ function renderVerifyContract() {
   const box = $('#verify-contract');
   const s = currentVerifyService();
   if (!s) { box.innerHTML = ''; return; }
-  const joinInfo = s.type === 'fusion' ? s.joins.map((j) => ((j.aggregates ?? []).length
+  const joinInfo = ['fusion', 'agg-fusion'].includes(s.type) ? s.joins.map((j) => ((j.aggregates ?? []).length
     ? `<div>📊 聚合从表 <code>${esc(j.name)}</code>：<span class="fqn">${esc(j.fqn)}</span> · 聚合 [${j.aggregates.map((a) => `${esc(a.function)}(${esc(a.column ?? '*')})→${esc(a.alias)}`).join(', ')}] · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主行 ≤1 行</div>`
     : `<div>融合从表 <code>${esc(j.name)}</code>：<span class="fqn">${esc(j.fqn)}</span> · 列 [${j.columns.map(esc).join(', ')}] · 关联 <code>${esc(j.joinColumn)}</code> ⇠ <code>${esc(j.parentColumn)}</code> · 每主键 ≤${j.limitPerParent}</div>`)).join('') : '';
-  const aggInfo = s.type === 'aggregate' ? s.aggregates.map((a) => `
+  const aggInfo = ['aggregate', 'agg-fusion'].includes(s.type) ? s.aggregates.map((a) => `
     <div>聚合列 <code>${esc(a.function)}(${esc(a.column ?? '*')})</code> → 输出别名 <code>${esc(a.alias)}</code></div>`).join('') : '';
   const keyRow = s.keyPolicy ? `<div>服务 Key：<span class="key-chip">sk-w6-••••（仅发布/轮换时一次性返回）</span>${keyStatusBadge(s.keyPolicy)}（仅本服务 /query 有效 —— 库内只存哈希）</div>` : '';
   box.innerHTML = `
     <div class="card" style="margin-bottom:14px">
-      <h3><span class="badge published">契约快照</span>${s.type === 'fusion' ? '<span class="badge fusion">JOIN</span>' : ''}${s.type === 'aggregate' ? '<span class="badge agg">AGG</span>' : ''}${esc(s.slug)}</h3>
+      <h3><span class="badge published">契约快照</span>${['fusion', 'agg-fusion'].includes(s.type) ? '<span class="badge fusion">JOIN</span>' : ''}${['aggregate', 'agg-fusion'].includes(s.type) ? '<span class="badge agg">AGG</span>' : ''}${esc(s.slug)}</h3>
       <div class="cols">
-        <div>${s.type === 'aggregate' ? '输出列（维度+别名）' : '返回列白名单'}：<code>${(s.type === 'aggregate' ? [...s.allowedColumns, ...s.aggregates.map((a) => a.alias)] : s.allowedColumns).map(esc).join('</code> <code>')}</code></div>
-        <div>过滤参数：${s.filters.length ? s.filters.map((f) => `<code>${esc(f.column)}:${esc(f.operator)}</code>`).join(' ') : '（无）'}${s.type === 'aggregate' ? '（聚合前 WHERE，可为非维度列）' : ''}</div>
+        <div>${['aggregate', 'agg-fusion'].includes(s.type) ? '输出列（维度+别名）' : '返回列白名单'}：<code>${(['aggregate', 'agg-fusion'].includes(s.type) ? [...s.allowedColumns, ...s.aggregates.map((a) => a.alias)] : s.allowedColumns).map(esc).join('</code> <code>')}</code></div>
+        <div>过滤参数：${s.filters.length ? s.filters.map((f) => `<code>${esc(f.column)}:${esc(f.operator)}</code>`).join(' ') : '（无）'}${['aggregate', 'agg-fusion'].includes(s.type) ? '（聚合前 WHERE，可为非维度列）' : ''}</div>
         <div>源表：<span class="fqn">${esc(s.source)}.${esc(s.table)}</span> · 默认 ${s.defaultLimit} 行 · LIMIT 上限 500</div>
         ${joinInfo}
         ${aggInfo}
@@ -814,7 +823,7 @@ async function runVerificationSuite() {
   const rows = [];
   const addRow = (r) => { rows.push(r); resultsBox.innerHTML = verifyTableHtml(rows); };
 
-  if (s.type === 'fusion') {
+  if (s.type === 'fusion' || s.type === 'agg-fusion') {
     await fusionSuite(s, first, testValue, addRow);
   } else if (s.type === 'aggregate') {
     await aggregateSuite(s, first, testValue, addRow);
@@ -923,25 +932,28 @@ async function tableQuerySuite(s, first, testValue, addRow) {
   }
 }
 
-/** 融合服务 FV1-FV7：形状 · 注入 · 未知参数 · LIMIT/每主键钳制 · 发布闸 · 关联一致性 · 金标 */
+/** 融合服务 FV1-FV8（agg-fusion 组合形态走同一套 + CF1/CF2）：形状 · 注入 · 未知参数 · 钳制 · 发布闸 · 关联一致性 · 金标 */
 async function fusionSuite(s, first, testValue, addRow) {
+  // W6-G：组合形态主行列 = 分组维度 + 聚合别名（FV1 形状断言按此校验）
+  const combined = s.type === 'agg-fusion';
+  const mainCols = combined ? [...s.allowedColumns, ...s.aggregates.map((a) => a.alias)] : s.allowedColumns;
   const nestedCount = (d) => (d?.rows ?? []).reduce(
     (n, row) => n + s.joins.reduce((m, j) => m + (Array.isArray(row[j.name]) ? row[j.name].length : -1), 0), 0);
 
-  // FV1 融合形状：200 + 主列=白名单 + 嵌套字段名=声明 + 每主行都挂数组
+  // FV1 融合形状：200 + 主列=白名单(组合=维度+别名) + 嵌套字段名=声明 + 每主行都挂数组
   {
     const params = first ? { [first.column]: testValue } : {};
     const r = await callVerifyQuery(s.slug, { ...params, limit: 5 });
     const d = r.data ?? {};
     const cols = d.columns ?? [];
-    const whitelist = new Set(s.allowedColumns);
+    const whitelist = new Set(mainCols);
     const joinNames = (d.joins ?? []).map((j) => j.name);
     const shapeOk = r.http === 200
-      && cols.length === s.allowedColumns.length && cols.every((c) => whitelist.has(c))
+      && cols.length === mainCols.length && cols.every((c) => whitelist.has(c))
       && joinNames.join(',') === s.joins.map((j) => j.name).join(',')
       && (d.rows ?? []).every((row) => s.joins.every((j) => Array.isArray(row[j.name])));
     addRow({
-      id: 'FV1', name: '融合形状', expect: 'HTTP 200 · 主列=白名单 · 嵌套字段名=声明 · 每主行挂从行数组',
+      id: 'FV1', name: '融合形状', expect: 'HTTP 200 · 主列=输出列契约 · 嵌套字段名=声明 · 每主行挂从行数组',
       status: shapeOk ? 'pass' : 'fail',
       detail: `HTTP ${r.http} · ${d.rows?.length ?? '?'} 主行 · 嵌套 [${joinNames.join(', ')}] · ${r.elapsed}ms`,
     });
@@ -1121,6 +1133,64 @@ async function fusionSuite(s, first, testValue, addRow) {
       addRow({ id: 'FV8', name: '聚合 join 金标+注入闸', expect: '聚合 join 金标 + 别名注入发布闸', status: 'skip', detail: '该融合服务未声明聚合 join（行级从行）' });
     }
   }
+
+  // CF1/CF2 组合形态专属（W6-G）：仅 agg-fusion 跑 —— 组合金标 + 撞名发布闸
+  if (combined) {
+    // CF1 组合金标：orders 维度聚合 + PG risk_tags 挂载 → C0001 一标全验三机制（GROUP BY + 跨源方言 + 维度挂载）
+    {
+      const cntAgg = s.aggregates.find((a) => a.function === 'COUNT');
+      const sumAgg = s.aggregates.find((a) => a.function === 'SUM' && a.column === 'order_amount');
+      const riskJoin = s.joins.find((j) => j.fqn.endsWith('.risk_tags') && !(j.aggregates ?? []).length);
+      if (s.table === 'orders' && cntAgg && sumAgg && riskJoin) {
+        const hasCustIdFilter = s.filters.some((f) => f.column === 'cust_id');
+        const r = await callVerifyQuery(s.slug, hasCustIdFilter ? { cust_id: 'C0001' } : { limit: 20 });
+        const row = (r.data?.rows ?? []).find((x) => x.cust_id === 'C0001');
+        const nested = row?.[riskJoin.name] ?? [];
+        const golden = r.http === 200
+          && String(row?.[cntAgg.alias]) === '2'
+          && String(row?.[sumAgg.alias]) === '4670.50'
+          && nested.length === 1 && nested[0].risk_level === 'high' && String(nested[0].risk_score) === '82';
+        addRow({
+          id: 'CF1', name: '组合金标',
+          expect: 'C0001 → 主行聚合(2单/4670.50) + risk_tags[0]{high,82}（聚合+跨源+挂载三机制）',
+          status: golden ? 'pass' : 'fail',
+          detail: row ? `${cntAgg.alias}=${row[cntAgg.alias]} · ${sumAgg.alias}=${row[sumAgg.alias]} · ${riskJoin.name}[0]{${nested[0]?.risk_level ?? '?'}, ${nested[0]?.risk_score ?? '?'}}` : '未取到 C0001 组合行',
+        });
+      } else {
+        addRow({ id: 'CF1', name: '组合金标', expect: '种子已知值三机制比对', status: 'skip', detail: '非 orders×risk_tags COUNT+SUM(order_amount) 形态 —— 金标不适用' });
+      }
+    }
+
+    // CF2 组合发布闸：join.name 撞顶层聚合别名 → 400（主行输出键两两不撞，W6-G 新闸）
+    {
+      const mainTable = state.tables.find((t) => t.source === s.source && t.table === s.table);
+      if (mainTable && s.aggregates.length && s.joins.length) {
+        const probeSlug = `verify-probe-${Date.now()}cf`;
+        const res = await fetch('/api/w5/services', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            slug: probeSlug, name: '验证探针（应被拒）', description: 'verify probe',
+            fqn: mainTable.fqn, allowedColumns: s.allowedColumns, filters: [],
+            aggregates: s.aggregates,
+            joins: [{ ...s.joins[0], name: s.aggregates[0].alias }],
+            defaultLimit: 5,
+          }),
+        });
+        let msg = '';
+        try { msg = (await res.json()).message ?? ''; } catch { /* ignore */ }
+        if (res.status === 201) await fetch(`/api/w5/services/${encodeURIComponent(probeSlug)}`, { method: 'DELETE' });
+        addRow({
+          id: 'CF2', name: '组合发布闸',
+          expect: `join.name 撞顶层聚合别名「${s.aggregates[0].alias}」→ HTTP 400`,
+          status: res.status === 400 ? 'pass' : 'fail',
+          detail: `HTTP ${res.status} · ${String(msg).slice(0, 90)}`,
+        });
+      } else {
+        addRow({ id: 'CF2', name: '组合发布闸', expect: 'join.name 撞顶层聚合别名 → HTTP 400', status: 'skip', detail: '目录中未找到主表 FQN（OM 离线？）—— 无法构造发布探针' });
+      }
+    }
+  }
 }
 
 /** 聚合服务 AV1-AV5：形状 · 注入 · 未知参数 · LIMIT+数值性 · 发布白名单双探针 */
@@ -1240,28 +1310,15 @@ document.querySelectorAll('.tab-btn').forEach((b) => { b.onclick = () => switchT
 $('#catalog-search').oninput = (e) => { state.search = e.target.value; renderCatalog(); };
 $('#wiz-table').onchange = onWizardTableChange;
 $('#wiz-columns').onchange = () => refreshParentColumnOptions(); // 主表勾选变化 → 联动关联主表列候选
+// W6-G：聚合与融合同开 = 组合形态 agg-fusion（主表 GROUP BY + 从表按维度挂载），不再互斥
 $('#wiz-join-on').onchange = (e) => {
   state.wiz.join.on = e.target.checked;
-  if (e.target.checked) {
-    // 互斥：开融合自动关聚合（聚合+组合属 Phase 3+）
-    state.wiz.agg.on = false;
-    $('#wiz-agg-on').checked = false;
-    $('#wiz-agg-block').style.display = 'none';
-    $('#wiz-cols-note').style.display = 'none';
-    $('#wiz-filter-note').textContent = '';
-    onJoinTableChange();
-  }
+  if (e.target.checked) onJoinTableChange();
   $('#wiz-join-block').style.display = e.target.checked ? 'block' : 'none';
 };
 $('#wiz-agg-on').onchange = (e) => {
   state.wiz.agg.on = e.target.checked;
-  if (e.target.checked) {
-    // 互斥：开聚合自动关融合
-    state.wiz.join.on = false;
-    $('#wiz-join-on').checked = false;
-    $('#wiz-join-block').style.display = 'none';
-    renderAggRows();
-  }
+  if (e.target.checked) renderAggRows();
   $('#wiz-agg-block').style.display = e.target.checked ? 'block' : 'none';
   $('#wiz-cols-note').style.display = e.target.checked ? 'inline' : 'none';
   $('#wiz-filter-note').textContent = e.target.checked ? '聚合模式：过滤列可为任意元数据列（WHERE 先于 GROUP BY）' : '';

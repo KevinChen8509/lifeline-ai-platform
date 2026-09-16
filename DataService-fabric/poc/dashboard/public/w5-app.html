@@ -116,7 +116,7 @@
   <header class="page-header">
     <div>
       <h1>Week 5/6 · 数据服务市场</h1>
-      <div class="sub">数据资源目录 · 业务场景 · 自助发布参数化 API · 跨表融合定制接口 · 分组聚合服务（SUM/COUNT，W6-C）· 从表聚合挂主行（W6-F）· 契约验证与服务级 Key 对外开放 · 注册表持久化 / Key 生命周期 / 限流计量（W6-B）</div>
+      <div class="sub">数据资源目录 · 业务场景 · 自助发布参数化 API · 跨表融合定制接口 · 分组聚合服务（SUM/COUNT，W6-C）· 从表聚合挂主行（W6-F）· 组合形态：主表聚合+从表挂载（W6-G）· 契约验证与服务级 Key 对外开放 · 注册表持久化 / Key 生命周期 / 限流计量（W6-B）</div>
     </div>
     <div class="links">
       <a href="/index.html">Week 1-2</a>
@@ -208,7 +208,7 @@
           <label style="min-width:auto;background:#16213a;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:13px">
             <input type="checkbox" id="wiz-join-on" style="width:auto"> 🌀 跨表融合（主行挂从表嵌套数组，如 客户 + 订单）
           </label>
-          <span style="font-size:12px;color:var(--text-dim)">发布为 fusion 服务，从表列/关联键同样逐字校验目录元数据（与顶层聚合互斥）；从表可跨源（MySQL / ClickHouse / PostgreSQL，⟂ 标记）应用层关联合并，也可切 📊 聚合模式让从表按关联键出指标（W6-F）</span>
+          <span style="font-size:12px;color:var(--text-dim)">发布为 fusion 服务，从表列/关联键同样逐字校验目录元数据；从表可跨源（MySQL / ClickHouse / PostgreSQL，⟂ 标记）应用层关联合并，也可切 📊 聚合模式让从表按关联键出指标（W6-F）；与「分组聚合」同开即组合形态 agg-fusion（W6-G）</span>
         </div>
         <div class="join-block" id="wiz-join-block" style="display:none">
           <div class="wiz-row">
@@ -252,7 +252,7 @@
           <label style="min-width:auto;background:#16213a;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:13px">
             <input type="checkbox" id="wiz-agg-on" style="width:auto"> 📊 分组聚合（GROUP BY 维度 + SUM/COUNT 聚合列，如 按客户汇总订单）
           </label>
-          <span style="font-size:12px;color:var(--text-dim)">发布为 aggregate 服务，聚合函数/列/别名白名单校验（与融合互斥）</span>
+          <span style="font-size:12px;color:var(--text-dim)">发布为 aggregate 服务，聚合函数/列/别名白名单校验；与「跨表融合」同开即组合形态 agg-fusion（W6-G：主行=维度+聚合别名，从表按维度挂载）</span>
         </div>
         <div class="join-block" id="wiz-agg-block" style="display:none">
           <div class="wiz-row" style="margin-bottom:6px">
@@ -289,7 +289,7 @@
     <section class="tab-panel" id="panel-verify">
       <div class="wizard">
         <h3>🧪 服务验证台</h3>
-        <div class="hint">发布 ≠ 交付 —— 单表服务跑 V1-V5（正常调用 · 注入防御 · 未知参数拒绝 · LIMIT 钳制 · 发布白名单闸），融合服务跑 FV1-FV8（另含关联一致性自检 + 金标用例 + 聚合 join 金标与别名注入闸），聚合服务跑 AV1-AV5（另含聚合数值性校验 + 别名注入双探针）。全部通过即可放心交付消费方（与 mvn 158/158 测试同一防线）。注意：服务限流过低会导致套件连跑触发 429</div>
+        <div class="hint">发布 ≠ 交付 —— 单表服务跑 V1-V5（正常调用 · 注入防御 · 未知参数拒绝 · LIMIT 钳制 · 发布白名单闸），融合服务跑 FV1-FV8（另含关联一致性自检 + 金标用例 + 聚合 join 金标与别名注入闸），聚合服务跑 AV1-AV5（另含聚合数值性校验 + 别名注入双探针），组合形态另跑 CF1/CF2（组合金标：聚合+跨源+挂载一标全验 · 撞名发布闸）。全部通过即可放心交付消费方（与 mvn 165/165 测试同一防线）。注意：服务限流过低会导致套件连跑触发 429</div>
         <div class="wiz-row">
           <label>验证对象</label>
           <select id="verify-slug" style="min-width:340px"></select>

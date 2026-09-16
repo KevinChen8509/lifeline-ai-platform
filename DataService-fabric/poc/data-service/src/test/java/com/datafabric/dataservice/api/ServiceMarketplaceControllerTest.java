@@ -731,8 +731,8 @@ class ServiceMarketplaceControllerTest {
     }
 
     @Test
-    @DisplayName("聚合发布闸：alias 塞注入 payload → 400；聚合+融合同报 → 400")
-    void aggregatePublish_evilAliasAndJoinsMix_badRequest() throws Exception {
+    @DisplayName("聚合发布闸：alias 塞注入 payload → 400；聚合+融合同报 → 201 agg-fusion（W6-G 开闸）")
+    void aggregatePublish_evilAliasRejected_mixAcceptedAsAggFusion() throws Exception {
         String evilAlias = aggregateBody("agg-alias-evil")
                 .replace("\"alias\": \"total_amount\"", "\"alias\": \"total; DROP TABLE orders\"");
         mockMvc.perform(post("/api/v1/services")
@@ -750,7 +750,8 @@ class ServiceMarketplaceControllerTest {
                         .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(mix))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.service.type").value("agg-fusion"));
     }
 
     // ============ W6-D 跨源融合（MySQL 主表 + PostgreSQL 从表） ============
@@ -929,5 +930,93 @@ class ServiceMarketplaceControllerTest {
         assertThat(result.getResponse().getContentAsString())
                 .contains("\"total\":0")
                 .doesNotContain("张伟").doesNotContain("4670.50");
+    }
+
+    // ============ W6-G 组合形态（agg-fusion：主表 GROUP BY + 从表挂载） ============
+
+    /** 组合发布体：orders GROUP BY cust_id（COUNT/SUM）+ PG risk_tags 行级挂载 */
+    private String aggFusionBody(String slug) {
+        return """
+                {
+                  "slug": "%s",
+                  "name": "按客户汇总订单并挂风险标签",
+                  "description": "W6-G 组合形态（agg-fusion）",
+                  "fqn": "mysql.customer_db.orders",
+                  "allowedColumns": ["cust_id"],
+                  "filters": [{"column": "cust_id", "operator": "eq"}],
+                  "aggregates": [
+                    {"function": "COUNT", "column": null, "alias": "order_count"},
+                    {"function": "SUM", "column": "order_amount", "alias": "total_amount"}
+                  ],
+                  "joins": [{
+                    "fqn": "postgres.external.risk_tags",
+                    "name": "risk_tags",
+                    "columns": ["risk_level", "risk_score"],
+                    "joinColumn": "cust_id",
+                    "parentColumn": "cust_id",
+                    "limitPerParent": 5
+                  }],
+                  "defaultLimit": 10
+                }""".formatted(slug);
+    }
+
+    @Test
+    @DisplayName("组合金标：agg-fusion 201 → C0001 组合行 = 主表聚合(2/4670.50) + PG risk_tags[0](high/82) —— 三机制一标全验")
+    void aggFusionPublishThenQuery_goldenRow() throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(aggFusionBody("orders-risk-aggfusion-e2e")))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.service.type").value("agg-fusion"))
+                .andExpect(jsonPath("$.apiKey").isNotEmpty());
+
+        // 主表 GROUP BY（W6-C）+ PG 双引号方言挂载（W6-D，反引号在此模式必语法错）+ 维度挂载（W6-G）
+        mockMvc.perform(get("/api/v1/services/orders-risk-aggfusion-e2e/query")
+                        .param("cust_id", "C0001")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.columns.length()").value(3))   // 维度 + 2 聚合别名
+                .andExpect(jsonPath("$.joins[0].name").value("risk_tags"))
+                .andExpect(jsonPath("$.rows[0].cust_id").value("C0001"))
+                .andExpect(jsonPath("$.rows[0].order_count").value("2"))
+                .andExpect(jsonPath("$.rows[0].total_amount").value("4670.50"))
+                .andExpect(jsonPath("$.rows[0].risk_tags.length()").value(1))
+                .andExpect(jsonPath("$.rows[0].risk_tags[0].risk_level").value("high"))
+                .andExpect(jsonPath("$.rows[0].risk_tags[0].risk_score").value("82"))
+                .andExpect(jsonPath("$.rows[0].risk_tags[0].cust_id").value("C0001"));
+    }
+
+    @Test
+    @DisplayName("组合注入：过滤 payload 全值绑定 → total=0 零泄露（聚合+挂载同防线）")
+    void aggFusionQuery_injectionPayload_zeroRows() throws Exception {
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(aggFusionBody("orders-risk-aggfusion-inject")))
+                .andExpect(status().isCreated());
+
+        MvcResult result = mockMvc.perform(get("/api/v1/services/orders-risk-aggfusion-inject/query")
+                        .param("cust_id", "C0001' OR '1'='1")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        assertThat(result.getResponse().getContentAsString())
+                .contains("\"total\":0")
+                .doesNotContain("4670.50").doesNotContain("high");
+    }
+
+    @Test
+    @DisplayName("组合发布闸：join.name 撞顶层聚合别名 → 400（主行输出键两两不撞）")
+    void aggFusionPublish_joinNameCollidesWithTopAlias_badRequest() throws Exception {
+        String body = aggFusionBody("aggfusion-name-clash")
+                .replace("\"name\": \"risk_tags\"", "\"name\": \"total_amount\"");
+        mockMvc.perform(post("/api/v1/services")
+                        .header(SecurityConfig.HEADER_API_KEY, TEST_API_KEY)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
     }
 }
