@@ -58,3 +58,7 @@ desktop.ini
 # ---- Docker 运行时 ----
 poc/data/
 poc/volumes/
+
+# E2E full-chain 脚本运行产物（日志留档 / 临时工作目录）
+poc/scripts/.e2e-last/
+poc/scripts/.e2e-tmp/
